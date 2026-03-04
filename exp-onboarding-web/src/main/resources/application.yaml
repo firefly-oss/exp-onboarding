@@ -1,0 +1,101 @@
+spring:
+  application:
+    name: exp-onboarding
+    version: 1.0.0
+    team:
+      name: Firefly Software Solutions Inc
+      email: dev@getfirefly.io
+  threads:
+    virtual:
+      enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+firefly:
+  orchestration:
+    persistence:
+      provider: redis
+      key-prefix: "exp-onboarding:"
+      key-ttl: 72h
+      retention-period: 30d
+      cleanup-interval: 6h
+    recovery:
+      enabled: true
+      stale-threshold: 1h
+  cqrs:
+    enabled: true
+    command:
+      timeout: 30s
+      metrics-enabled: true
+      tracing-enabled: true
+    query:
+      timeout: 15s
+      caching-enabled: true
+      cache-ttl: 5m
+  eda:
+    enabled: true
+    default-publisher-type: KAFKA
+    publishers:
+      kafka:
+        default:
+          bootstrap-servers: localhost:9092
+  stepevents:
+    enabled: true
+
+api-configuration:
+  domain-platform.customer-people:
+    base-path: http://localhost:8081
+  domain-platform.customer-kyc-kyb:
+    base-path: http://localhost:8083
+  domain-platform.common-notifications:
+    base-path: http://localhost:8095
+
+springdoc:
+  packages-to-scan: com.firefly.experience.onboarding.web.controllers
+  paths-to-match: /api/**
+
+server:
+  port: ${SERVER_PORT:8096}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.firefly.experience.onboarding: DEBUG
+    org.fireflyframework: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+logging:
+  level:
+    com.firefly: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: pro
+logging:
+  level:
+    com.firefly: INFO
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
