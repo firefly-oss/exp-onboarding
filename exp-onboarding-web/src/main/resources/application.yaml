@@ -34,13 +34,6 @@ firefly:
       timeout: 15s
       caching-enabled: true
       cache-ttl: 5m
-  eda:
-    enabled: true
-    default-publisher-type: KAFKA
-    publishers:
-      kafka:
-        default:
-          bootstrap-servers: localhost:9092
   stepevents:
     enabled: true
 

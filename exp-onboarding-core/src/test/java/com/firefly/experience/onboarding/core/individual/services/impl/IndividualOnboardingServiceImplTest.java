@@ -49,7 +49,7 @@ class IndividualOnboardingServiceImplTest {
     }
 
     @Test
-    void initiateOnboarding_startsWorkflowAndReturnsOnboardingId() {
+    void initiateOnboarding_startsWorkflowAndReturnsJourneyStatus() {
         UUID partyId = UUID.randomUUID();
 
         ExecutionState state = new ExecutionState(
@@ -63,8 +63,17 @@ class IndividualOnboardingServiceImplTest {
                 Optional.empty()                          // report
         );
 
+        JourneyStatusDTO statusDTO = JourneyStatusDTO.builder()
+                .partyId(partyId)
+                .currentPhase(PHASE_AWAITING_PERSONAL_DATA)
+                .completedSteps(List.of(STEP_REGISTER_PARTY, STEP_OPEN_KYC_CASE, STEP_SEND_WELCOME))
+                .nextStep(STEP_RECEIVE_PERSONAL_DATA)
+                .build();
+
         when(workflowEngine.startWorkflow(eq(WORKFLOW_ID), any(Map.class), any(String.class), eq("api"), eq(false)))
                 .thenReturn(Mono.just(state));
+        when(queryService.executeQuery(any(String.class), eq(QUERY_JOURNEY_STATUS)))
+                .thenReturn(Mono.just(statusDTO));
 
         InitiateOnboardingCommand cmd = InitiateOnboardingCommand.builder()
                 .firstName("Jane")
@@ -73,7 +82,11 @@ class IndividualOnboardingServiceImplTest {
                 .build();
 
         StepVerifier.create(service.initiateOnboarding(cmd))
-                .assertNext(result -> assertThat(result).isNotNull())
+                .assertNext(result -> {
+                    assertThat(result).isNotNull();
+                    assertThat(result.getPartyId()).isEqualTo(partyId);
+                    assertThat(result.getCurrentPhase()).isEqualTo(PHASE_AWAITING_PERSONAL_DATA);
+                })
                 .verifyComplete();
 
         verify(workflowEngine).startWorkflow(eq(WORKFLOW_ID), any(Map.class), any(String.class), eq("api"), eq(false));

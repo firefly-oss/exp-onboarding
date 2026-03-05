@@ -18,12 +18,6 @@
     </properties>
 
     <dependencies>
-        <!-- Internal modules -->
-        <dependency>
-            <groupId>com.firefly</groupId>
-            <artifactId>exp-onboarding-core</artifactId>
-        </dependency>
-
         <!-- Common Libraries -->
         <dependency>
             <groupId>org.fireflyframework</groupId>

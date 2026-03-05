@@ -34,11 +34,18 @@ class IndividualOnboardingControllerTest {
     private IndividualOnboardingController controller;
 
     @Test
-    void initiateOnboarding_returnsCreatedWithOnboardingId() {
+    void initiateOnboarding_returnsCreatedWithJourneyStatus() {
         UUID onboardingId = UUID.randomUUID();
+        JourneyStatusDTO statusDTO = JourneyStatusDTO.builder()
+                .onboardingId(onboardingId)
+                .partyId(UUID.randomUUID())
+                .currentPhase("AWAITING_PERSONAL_DATA")
+                .completedSteps(List.of("register-party", "open-kyc-case", "send-welcome"))
+                .nextStep("receive-personal-data")
+                .build();
 
         when(onboardingService.initiateOnboarding(any(InitiateOnboardingCommand.class)))
-                .thenReturn(Mono.just(onboardingId));
+                .thenReturn(Mono.just(statusDTO));
 
         InitiateOnboardingCommand command = InitiateOnboardingCommand.builder()
                 .firstName("John")
@@ -49,11 +56,10 @@ class IndividualOnboardingControllerTest {
         StepVerifier.create(controller.initiateOnboarding(command))
                 .assertNext(response -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> body = response.getBody();
+                    JourneyStatusDTO body = response.getBody();
                     assertThat(body).isNotNull();
-                    assertThat(body.get("onboardingId")).isEqualTo(onboardingId);
-                    assertThat(body.get("status")).isEqualTo("INITIATED");
+                    assertThat(body.getOnboardingId()).isEqualTo(onboardingId);
+                    assertThat(body.getCurrentPhase()).isEqualTo("AWAITING_PERSONAL_DATA");
                 })
                 .verifyComplete();
     }

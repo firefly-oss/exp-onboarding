@@ -33,7 +33,6 @@ public class IndividualOnboardingController {
     private static final String KEY_ONBOARDING_ID = "onboardingId";
     private static final String KEY_STATUS = "status";
 
-    private static final String STATUS_INITIATED = "INITIATED";
     private static final String STATUS_PERSONAL_DATA_SUBMITTED = "PERSONAL_DATA_SUBMITTED";
     private static final String STATUS_DOCUMENTS_SUBMITTED = "DOCUMENTS_SUBMITTED";
     private static final String STATUS_KYC_TRIGGERED = "KYC_TRIGGERED";
@@ -46,13 +45,10 @@ public class IndividualOnboardingController {
     @Operation(summary = "Initiate Onboarding",
                description = "Start a new individual onboarding journey — registers the party, "
                    + "opens a KYC case, and sends a welcome notification")
-    public Mono<ResponseEntity<Map<String, Object>>> initiateOnboarding(
+    public Mono<ResponseEntity<JourneyStatusDTO>> initiateOnboarding(
             @Valid @RequestBody InitiateOnboardingCommand command) {
         return onboardingService.initiateOnboarding(command)
-                .map(onboardingId -> ResponseEntity.status(HttpStatus.CREATED)
-                        .body(Map.of(
-                                KEY_ONBOARDING_ID, onboardingId,
-                                KEY_STATUS, STATUS_INITIATED)));
+                .map(status -> ResponseEntity.status(HttpStatus.CREATED).body(status));
     }
 
     @GetMapping(value = "/{onboardingId}", produces = MediaType.APPLICATION_JSON_VALUE)
