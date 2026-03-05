@@ -14,24 +14,24 @@ import java.util.UUID;
  * Each method corresponds to an atomic endpoint that starts or advances the workflow.
  */
 public interface IndividualOnboardingService {
-    /** Start a new onboarding journey. Returns the partyId as journey identifier. */
-    Mono<UUID> initiateOnboarding(InitiateOnboardingCommand command);
+    /** Start a new onboarding journey. Returns the onboarding status with the onboarding ID. */
+    Mono<JourneyStatusDTO> initiateOnboarding(InitiateOnboardingCommand command);
 
     /** Send personal data signal to advance the journey. */
-    Mono<Void> submitPersonalData(UUID partyId, SubmitPersonalDataCommand command);
+    Mono<Void> submitPersonalData(UUID onboardingId, SubmitPersonalDataCommand command);
 
     /** Send identity documents signal to advance the journey. */
-    Mono<Void> submitIdentityDocuments(UUID partyId, SubmitIdentityDocumentsCommand command);
+    Mono<Void> submitIdentityDocuments(UUID onboardingId, SubmitIdentityDocumentsCommand command);
 
     /** Send KYC trigger signal to advance the journey. */
-    Mono<Void> triggerKyc(UUID partyId);
+    Mono<Void> triggerKyc(UUID onboardingId);
 
     /** Send completion signal to advance the journey. */
-    Mono<Void> completeOnboarding(UUID partyId);
+    Mono<Void> completeOnboarding(UUID onboardingId);
 
     /** Reconstruct current journey status from the workflow's execution state. */
-    Mono<JourneyStatusDTO> getJourneyStatus(UUID partyId);
+    Mono<JourneyStatusDTO> getJourneyStatus(UUID onboardingId);
 
     /** Retrieve KYC verification status for the onboarding journey. */
-    Mono<KycStatusDTO> getKycStatus(UUID partyId);
+    Mono<KycStatusDTO> getKycStatus(UUID onboardingId);
 }

@@ -35,29 +35,22 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
     private final WorkflowQueryService queryService;
 
     @Override
-    public Mono<UUID> initiateOnboarding(InitiateOnboardingCommand command) {
+    public Mono<JourneyStatusDTO> initiateOnboarding(InitiateOnboardingCommand command) {
         String correlationId = UUID.randomUUID().toString();
         Map<String, Object> input = Map.of("command", command);
 
         // SYNC mode: executes steps until the first @WaitForSignal gate, then returns.
         // At that point, register-party step has completed and partyId is available.
         return workflowEngine.startWorkflow(IndividualOnboardingWorkflow.WORKFLOW_ID, input, correlationId, "api", false)
-                .map(state -> {
-                    Object partyId = state.stepResults().get(IndividualOnboardingWorkflow.STEP_REGISTER_PARTY);
-                    if (partyId instanceof UUID uuid) {
-                        return uuid;
-                    }
-                    // Fallback: use correlationId as onboardingId
-                    return UUID.fromString(correlationId);
-                })
-                .doOnNext(onboardingId ->
-                        log.info("Initiated onboarding journey: onboardingId={}", onboardingId));
+                .flatMap(state -> queryService.executeQuery(correlationId, IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS))
+                .cast(JourneyStatusDTO.class)
+                .doOnNext(status ->
+                        log.info("Initiated onboarding journey: onboardingId={}", correlationId));
     }
 
     @Override
     public Mono<Void> submitPersonalData(UUID onboardingId, SubmitPersonalDataCommand command) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> signalService.signal(cid, IndividualOnboardingWorkflow.SIGNAL_PERSONAL_DATA, command))
+        return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_PERSONAL_DATA, command)
                 .doOnNext(r -> log.info("Signal delivered: personal-data-submitted for onboardingId={}",
                         onboardingId))
                 .then();
@@ -65,8 +58,7 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
 
     @Override
     public Mono<Void> submitIdentityDocuments(UUID onboardingId, SubmitIdentityDocumentsCommand command) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> signalService.signal(cid, IndividualOnboardingWorkflow.SIGNAL_IDENTITY_DOCS, command))
+        return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_IDENTITY_DOCS, command)
                 .doOnNext(r -> log.info("Signal delivered: identity-docs-submitted for onboardingId={}",
                         onboardingId))
                 .then();
@@ -74,8 +66,7 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
 
     @Override
     public Mono<Void> triggerKyc(UUID onboardingId) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> signalService.signal(cid, IndividualOnboardingWorkflow.SIGNAL_KYC_TRIGGERED, null))
+        return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_KYC_TRIGGERED, null)
                 .doOnNext(r -> log.info("Signal delivered: kyc-triggered for onboardingId={}",
                         onboardingId))
                 .then();
@@ -83,8 +74,7 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
 
     @Override
     public Mono<Void> completeOnboarding(UUID onboardingId) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> signalService.signal(cid, IndividualOnboardingWorkflow.SIGNAL_COMPLETION, null))
+        return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_COMPLETION, null)
                 .doOnNext(r -> log.info("Signal delivered: completion-requested for onboardingId={}",
                         onboardingId))
                 .then();
@@ -92,27 +82,17 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
 
     @Override
     public Mono<JourneyStatusDTO> getJourneyStatus(UUID onboardingId) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> queryService.executeQuery(cid, IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS))
+        return queryService.executeQuery(onboardingId.toString(), IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS)
                 .cast(JourneyStatusDTO.class);
     }
 
     @Override
     public Mono<KycStatusDTO> getKycStatus(UUID onboardingId) {
-        return resolveCorrelationId(onboardingId)
-                .flatMap(cid -> queryService.executeQuery(cid, IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS))
+        return queryService.executeQuery(onboardingId.toString(), IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS)
                 .cast(JourneyStatusDTO.class)
                 .map(journey -> KycStatusDTO.builder()
                         .caseId(journey.getKycCaseId())
                         .status(journey.getKycVerificationStatus())
                         .build());
-    }
-
-    /**
-     * Resolves a business identifier (onboardingId) to the workflow's correlationId.
-     * Uses direct mapping since onboardingId equals the correlationId.
-     */
-    private Mono<String> resolveCorrelationId(UUID onboardingId) {
-        return Mono.just(onboardingId.toString());
     }
 }

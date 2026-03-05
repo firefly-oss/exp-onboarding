@@ -1,5 +1,6 @@
 package com.firefly.experience.onboarding.infra;
 
+import com.firefly.domain.people.sdk.api.BusinessesApi;
 import com.firefly.domain.people.sdk.api.CustomersApi;
 import com.firefly.domain.people.sdk.invoker.ApiClient;
 import org.springframework.context.annotation.Bean;
@@ -25,12 +26,22 @@ public class CustomerPeopleClientFactory {
     }
 
     /**
-     * Provides the {@link CustomersApi} bean for customer operations.
+     * Provides the {@link CustomersApi} bean for individual customer operations.
      *
      * @return a ready-to-use CustomersApi instance
      */
     @Bean
     public CustomersApi customersApi() {
         return new CustomersApi(apiClient);
+    }
+
+    /**
+     * Provides the {@link BusinessesApi} bean for business customer operations.
+     *
+     * @return a ready-to-use BusinessesApi instance
+     */
+    @Bean
+    public BusinessesApi businessesApi() {
+        return new BusinessesApi(apiClient);
     }
 }

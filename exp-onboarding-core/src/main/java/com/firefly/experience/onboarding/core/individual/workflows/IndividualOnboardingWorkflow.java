@@ -5,6 +5,7 @@ import com.firefly.domain.common.notifications.sdk.model.SendNotificationCommand
 import com.firefly.domain.kyc.kyb.sdk.api.KycApi;
 import com.firefly.domain.kyc.kyb.sdk.model.AttachKycEvidenceCommand;
 import com.firefly.domain.kyc.kyb.sdk.model.OpenKycCaseCommand;
+import com.firefly.domain.kyc.kyb.sdk.model.FailKycCommand;
 import com.firefly.domain.kyc.kyb.sdk.model.VerifyKycCommand;
 import com.firefly.domain.people.sdk.api.CustomersApi;
 import com.firefly.domain.people.sdk.model.RegisterAddressCommand;
@@ -146,7 +147,7 @@ public class IndividualOnboardingWorkflow {
             registerCmd.phones(List.of(new RegisterPhoneCommand().phoneNumber(cmd.getPhone())));
         }
 
-        return customersApi.registerCustomer(registerCmd, null, null, null, null, null, null, null)
+        return customersApi.registerCustomer(registerCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered party: partyId={}", partyId));
     }
@@ -160,7 +161,7 @@ public class IndividualOnboardingWorkflow {
                 .partyId(partyId)
                 .dueDiligenceLevel(cmd.getDueDiligenceLevel());
 
-        return kycApi.openKycCase(openCmd, null, null, null, null, null, null, null)
+        return kycApi.openKycCase(openCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
                 .doOnNext(caseId -> log.info("Opened KYC case: caseId={}", caseId));
     }
@@ -199,7 +200,7 @@ public class IndividualOnboardingWorkflow {
                 .postalCode(cmd.getPostalCode());
 
         return customersApi.addCustomerAddress(partyId, addressCmd,
-                        null, null, null, null, null, null, null)
+                        UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .doOnNext(r -> log.info("Submitted personal data for partyId={}", partyId))
                 .then();
     }
@@ -221,7 +222,7 @@ public class IndividualOnboardingWorkflow {
                 .documentContent(cmd.getDocumentContent())
                 .mimeType(cmd.getMimeType());
 
-        return kycApi.attachKycEvidence(caseId, attachCmd, null, null, null, null, null, null, null)
+        return kycApi.attachKycEvidence(caseId, attachCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .flatMap(response -> extractUuid(response, FIELD_DOCUMENT_ID))
                 .doOnNext(docId -> log.info("Attached identity document: documentId={}", docId));
     }
@@ -237,7 +238,7 @@ public class IndividualOnboardingWorkflow {
                 .partyId(partyId)
                 .verificationLevel(KYC_VERIFICATION_LEVEL);
 
-        return kycApi.verifyKyc(caseId, verifyCmd, null, null, null, null, null, null, null)
+        return kycApi.verifyKyc(caseId, verifyCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .doOnNext(r -> log.info("Triggered KYC verification for caseId={}", caseId))
                 .then();
     }
@@ -267,7 +268,7 @@ public class IndividualOnboardingWorkflow {
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYC_APPROVED)
     public Mono<Void> activateParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return customersApi.reactivateCustomer(partyId, null, null, null, null, null, null, null)
+        return customersApi.reactivateCustomer(partyId, UUID.randomUUID().toString(), null, null, null, null, null, null)
                 .doOnNext(r -> log.info("Activated party: partyId={}", partyId))
                 .then();
     }
@@ -288,13 +289,26 @@ public class IndividualOnboardingWorkflow {
     // ─── Compensation methods ───
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
-        log.warn("Compensating: party registration cannot be fully reversed — partyId={}", partyId);
-        return Mono.empty();
+        log.warn("Compensating: requesting closure for party partyId={}", partyId);
+        return customersApi.requestCustomerClosure(partyId, UUID.randomUUID().toString(), null, null, null, null, null, null)
+                .then()
+                .onErrorResume(ex -> {
+                    log.warn("Failed to compensate party closure partyId={}: {}", partyId, ex.getMessage());
+                    return Mono.empty();
+                });
     }
 
     public Mono<Void> compensateCancelKycCase(@FromStep(STEP_OPEN_KYC_CASE) UUID caseId) {
         log.warn("Compensating: cancelling KYC case caseId={}", caseId);
-        return Mono.empty();
+        FailKycCommand failCmd = new FailKycCommand()
+                .caseId(caseId)
+                .reason("Onboarding cancelled");
+        return kycApi.failKyc(caseId, failCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
+                .then()
+                .onErrorResume(ex -> {
+                    log.warn("Failed to compensate KYC case caseId={}: {}", caseId, ex.getMessage());
+                    return Mono.empty();
+                });
     }
 
     // ─── Journey state query ───
@@ -303,6 +317,7 @@ public class IndividualOnboardingWorkflow {
     public JourneyStatusDTO getJourneyStatus(ExecutionContext ctx) {
         Map<String, StepStatus> steps = ctx.getStepStatuses();
         return JourneyStatusDTO.builder()
+                .onboardingId(UUID.fromString(ctx.getCorrelationId()))
                 .partyId(toUuid(ctx.getVariable(VAR_PARTY_ID)))
                 .kycCaseId(toUuid(ctx.getVariable(VAR_KYC_CASE_ID)))
                 .currentPhase(deriveCurrentPhase(steps))

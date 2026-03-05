@@ -1,5 +1,6 @@
 package com.firefly.experience.onboarding.infra;
 
+import com.firefly.domain.kyc.kyb.sdk.api.KybApi;
 import com.firefly.domain.kyc.kyb.sdk.api.KycApi;
 import com.firefly.domain.kyc.kyb.sdk.invoker.ApiClient;
 import org.springframework.context.annotation.Bean;
@@ -32,5 +33,15 @@ public class CustomerKycKybClientFactory {
     @Bean
     public KycApi kycApi() {
         return new KycApi(apiClient);
+    }
+
+    /**
+     * Provides the {@link KybApi} bean for KYB verification (businesses).
+     *
+     * @return a ready-to-use KybApi instance
+     */
+    @Bean
+    public KybApi kybApi() {
+        return new KybApi(apiClient);
     }
 }

@@ -45,7 +45,11 @@
         </dependency>
         <dependency>
             <groupId>org.fireflyframework</groupId>
-            <artifactId>fireflyframework-starter-domain</artifactId>
+            <artifactId>fireflyframework-starter-application</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.fireflyframework</groupId>
+            <artifactId>fireflyframework-orchestration</artifactId>
         </dependency>
         <dependency>
             <groupId>org.fireflyframework</groupId>
