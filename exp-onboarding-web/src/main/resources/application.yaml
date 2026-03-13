@@ -38,12 +38,16 @@ firefly:
     enabled: true
 
 api-configuration:
-  domain-platform.customer-people:
-    base-path: http://localhost:8081
-  domain-platform.customer-kyc-kyb:
-    base-path: http://localhost:8083
-  domain-platform.common-notifications:
-    base-path: http://localhost:8095
+  domain-platform:
+    customer-people:
+      base-path: http://localhost:8081
+      timeout: 5s
+    customer-kyc-kyb:
+      base-path: http://localhost:8083
+      timeout: 10s
+    common-notifications:
+      base-path: http://localhost:8082
+      timeout: 5s
 
 springdoc:
   packages-to-scan: com.firefly.experience.onboarding.web.controllers

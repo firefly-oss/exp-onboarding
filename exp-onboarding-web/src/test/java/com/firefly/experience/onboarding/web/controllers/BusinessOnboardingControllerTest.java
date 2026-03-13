@@ -5,10 +5,13 @@ import com.firefly.experience.onboarding.core.business.commands.SubmitAuthorized
 import com.firefly.experience.onboarding.core.business.commands.SubmitCompanyDataCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitCorporateDocumentsCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitUbosCommand;
+import com.firefly.experience.onboarding.core.business.commands.UpdatePartialDataCommand;
 import com.firefly.experience.onboarding.core.business.queries.BusinessOnboardingStatusDTO;
 import com.firefly.experience.onboarding.core.business.queries.KybStatusDTO;
 import com.firefly.experience.onboarding.core.business.services.BusinessOnboardingService;
 import com.firefly.experience.onboarding.core.business.workflows.BusinessOnboardingWorkflow;
+import com.firefly.experience.onboarding.web.dto.BusinessOnboardingResponse;
+import com.firefly.experience.onboarding.web.dto.KybStatusResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -38,11 +41,17 @@ class BusinessOnboardingControllerTest {
     private BusinessOnboardingController controller;
 
     private static final UUID ONBOARDING_ID = UUID.randomUUID();
+    private static final UUID PARTY_ID = UUID.randomUUID();
+    private static final UUID KYB_CASE_ID = UUID.randomUUID();
 
+    /**
+     * Service-layer DTO returned by mocked service methods — the controller maps this
+     * to {@link BusinessOnboardingResponse} before returning it to the client.
+     */
     private static final BusinessOnboardingStatusDTO MOCK_STATUS = BusinessOnboardingStatusDTO.builder()
             .onboardingId(ONBOARDING_ID)
-            .partyId(UUID.randomUUID())
-            .kybCaseId(UUID.randomUUID())
+            .partyId(PARTY_ID)
+            .kybCaseId(KYB_CASE_ID)
             .currentPhase(BusinessOnboardingWorkflow.PHASE_INITIATED)
             .completedSteps(List.of(
                     BusinessOnboardingWorkflow.STEP_REGISTER_PARTY,
@@ -53,7 +62,7 @@ class BusinessOnboardingControllerTest {
             .build();
 
     @Test
-    void initiateOnboarding_returnsCreatedWithStatus() {
+    void initiateOnboarding_returnsCreatedWithBusinessOnboardingResponse() {
         when(onboardingService.initiateOnboarding(any(InitiateBusinessOnboardingCommand.class)))
                 .thenReturn(Mono.just(MOCK_STATUS));
 
@@ -66,35 +75,60 @@ class BusinessOnboardingControllerTest {
         StepVerifier.create(controller.initiateOnboarding(command))
                 .assertNext(response -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-                    assertThat(response.getBody()).isNotNull();
-                    assertThat(response.getBody().getCurrentPhase())
+                    BusinessOnboardingResponse body = response.getBody();
+                    assertThat(body).isNotNull();
+                    assertThat(body.getOnboardingId()).isEqualTo(ONBOARDING_ID);
+                    assertThat(body.getPartyId()).isEqualTo(PARTY_ID);
+                    assertThat(body.getCurrentPhase())
                             .isEqualTo(BusinessOnboardingWorkflow.PHASE_INITIATED);
-                    assertThat(response.getBody().getPartyId()).isNotNull();
                 })
                 .verifyComplete();
     }
 
     @Test
-    void getOnboardingStatus_returnsOkWithJourneyStatus() {
+    void getOnboardingStatus_returnsOkWithBusinessOnboardingResponse() {
         when(onboardingService.getStatus(ONBOARDING_ID))
                 .thenReturn(Mono.just(MOCK_STATUS));
 
         StepVerifier.create(controller.getOnboardingStatus(ONBOARDING_ID))
                 .assertNext(response -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-                    assertThat(response.getBody()).isNotNull();
-                    assertThat(response.getBody().getCurrentPhase())
+                    BusinessOnboardingResponse body = response.getBody();
+                    assertThat(body).isNotNull();
+                    assertThat(body.getCurrentPhase())
                             .isEqualTo(BusinessOnboardingWorkflow.PHASE_INITIATED);
-                    assertThat(response.getBody().getCompletedSteps())
+                    assertThat(body.getCompletedSteps())
                             .contains(BusinessOnboardingWorkflow.STEP_REGISTER_PARTY);
-                    assertThat(response.getBody().getNextStep())
+                    assertThat(body.getNextStep())
                             .isEqualTo(BusinessOnboardingWorkflow.STEP_RECEIVE_COMPANY_DATA);
                 })
                 .verifyComplete();
     }
 
     @Test
-    void submitCompanyData_returnsOkWithStatus() {
+    void updatePartialData_returnsOkWithStatusAcknowledgement() {
+        when(onboardingService.updatePartialData(eq(ONBOARDING_ID), any(UpdatePartialDataCommand.class)))
+                .thenReturn(Mono.empty());
+
+        UpdatePartialDataCommand command = UpdatePartialDataCommand.builder()
+                .businessName("Acme Corp Updated SL")
+                .contactEmail("ceo@acmecorp.es")
+                .build();
+
+        StepVerifier.create(controller.updatePartialData(ONBOARDING_ID, command))
+                .assertNext(response -> {
+                    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> body = response.getBody();
+                    assertThat(body).isNotNull();
+                    assertThat(body.get("onboardingId")).isEqualTo(ONBOARDING_ID);
+                    assertThat(body.get("status")).isEqualTo("PARTIAL_DATA_UPDATED");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void submitCompanyData_returnsOkWithStatusAcknowledgement() {
         when(onboardingService.submitCompanyData(eq(ONBOARDING_ID), any(SubmitCompanyDataCommand.class)))
                 .thenReturn(Mono.empty());
 
@@ -116,7 +150,7 @@ class BusinessOnboardingControllerTest {
     }
 
     @Test
-    void submitUbos_returnsOkWithStatus() {
+    void submitUbos_returnsOkWithStatusAcknowledgement() {
         when(onboardingService.submitUbos(eq(ONBOARDING_ID), any(SubmitUbosCommand.class)))
                 .thenReturn(Mono.empty());
 
@@ -139,7 +173,7 @@ class BusinessOnboardingControllerTest {
     }
 
     @Test
-    void submitCorporateDocuments_returnsOkWithStatus() {
+    void submitCorporateDocuments_returnsOkWithStatusAcknowledgement() {
         when(onboardingService.submitCorporateDocuments(eq(ONBOARDING_ID), any(SubmitCorporateDocumentsCommand.class)))
                 .thenReturn(Mono.empty());
 
@@ -162,7 +196,7 @@ class BusinessOnboardingControllerTest {
     }
 
     @Test
-    void submitAuthorizedSigners_returnsOkWithStatus() {
+    void submitAuthorizedSigners_returnsOkWithStatusAcknowledgement() {
         when(onboardingService.submitAuthorizedSigners(eq(ONBOARDING_ID), any(SubmitAuthorizedSignersCommand.class)))
                 .thenReturn(Mono.empty());
 
@@ -201,11 +235,10 @@ class BusinessOnboardingControllerTest {
     }
 
     @Test
-    void getKybStatus_returnsKybStatusDto() {
-        UUID caseId = UUID.randomUUID();
+    void getKybStatus_returnsOkWithKybStatusResponse() {
         KybStatusDTO dto = KybStatusDTO.builder()
-                .caseId(caseId)
-                .status("CASE_OPENED")
+                .caseId(KYB_CASE_ID)
+                .status("IN_PROGRESS")
                 .build();
 
         when(onboardingService.getKybStatus(ONBOARDING_ID))
@@ -214,15 +247,16 @@ class BusinessOnboardingControllerTest {
         StepVerifier.create(controller.getKybStatus(ONBOARDING_ID))
                 .assertNext(response -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-                    assertThat(response.getBody()).isNotNull();
-                    assertThat(response.getBody().getCaseId()).isEqualTo(caseId);
-                    assertThat(response.getBody().getStatus()).isEqualTo("CASE_OPENED");
+                    KybStatusResponse body = response.getBody();
+                    assertThat(body).isNotNull();
+                    assertThat(body.getCaseId()).isEqualTo(KYB_CASE_ID);
+                    assertThat(body.getStatus()).isEqualTo("IN_PROGRESS");
                 })
                 .verifyComplete();
     }
 
     @Test
-    void completeOnboarding_returnsOkWithStatus() {
+    void completeOnboarding_returnsOkWithStatusAcknowledgement() {
         when(onboardingService.completeOnboarding(ONBOARDING_ID))
                 .thenReturn(Mono.empty());
 

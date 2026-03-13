@@ -3,10 +3,11 @@ package com.firefly.experience.onboarding.core.business.workflows;
 import com.firefly.domain.common.notifications.sdk.api.NotificationsApi;
 import com.firefly.domain.common.notifications.sdk.model.SendNotificationCommand;
 import com.firefly.domain.kyc.kyb.sdk.api.KybApi;
-import com.firefly.domain.kyc.kyb.sdk.model.AttachKybEvidenceCommand;
-import com.firefly.domain.kyc.kyb.sdk.model.OpenKybCaseCommand;
-import com.firefly.domain.kyc.kyb.sdk.model.FailKybCommand;
-import com.firefly.domain.kyc.kyb.sdk.model.VerifyKybCommand;
+import com.firefly.domain.kyc.kyb.sdk.model.CreateKybCaseRequest;
+import com.firefly.domain.kyc.kyb.sdk.model.DocumentData;
+import com.firefly.domain.kyc.kyb.sdk.model.RegisterUbosRequest;
+import com.firefly.domain.kyc.kyb.sdk.model.SubmitCorporateDocumentsRequest;
+import com.firefly.domain.kyc.kyb.sdk.model.UboData;
 import com.firefly.domain.people.sdk.api.BusinessesApi;
 import com.firefly.domain.people.sdk.model.RegisterAddressCommand;
 import com.firefly.domain.people.sdk.model.RegisterBusinessCommand;
@@ -102,6 +103,8 @@ public class BusinessOnboardingWorkflow {
     // ─── Workflow variable names ───
     public static final String VAR_PARTY_ID = "partyId";
     public static final String VAR_KYB_CASE_ID = "kybCaseId";
+    public static final String VAR_BUSINESS_NAME = "businessName";
+    public static final String VAR_REGISTRATION_NUMBER = "registrationNumber";
 
     // ─── Journey phases ───
     public static final String PHASE_INITIATED = "INITIATED";
@@ -134,7 +137,11 @@ public class BusinessOnboardingWorkflow {
     @WorkflowStep(id = STEP_REGISTER_PARTY, compensatable = true,
                   compensationMethod = "compensateDeactivateParty")
     @SetVariable(VAR_PARTY_ID)
-    public Mono<UUID> registerBusinessParty(@Input InitiateBusinessOnboardingCommand cmd) {
+    public Mono<UUID> registerBusinessParty(@Input InitiateBusinessOnboardingCommand cmd,
+                                             ExecutionContext ctx) {
+        ctx.putVariable(VAR_BUSINESS_NAME, cmd.getBusinessName());
+        ctx.putVariable(VAR_REGISTRATION_NUMBER, cmd.getRegistrationNumber());
+
         RegisterBusinessCommand registerCmd = new RegisterBusinessCommand()
                 .party(new RegisterPartyCommand()
                         .partyKind(RegisterPartyCommand.PartyKindEnum.ORGANIZATION)
@@ -143,7 +150,7 @@ public class BusinessOnboardingWorkflow {
                         .legalName(cmd.getBusinessName())
                         .registrationNumber(cmd.getRegistrationNumber()));
 
-        return businessesApi.registerBusiness(registerCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
+        return businessesApi.registerBusiness(registerCmd)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered business party: partyId={}", partyId));
     }
@@ -151,12 +158,18 @@ public class BusinessOnboardingWorkflow {
     @WorkflowStep(id = STEP_OPEN_KYB_CASE, dependsOn = STEP_REGISTER_PARTY,
                   compensatable = true, compensationMethod = "compensateCancelKybCase")
     @SetVariable(VAR_KYB_CASE_ID)
-    public Mono<UUID> openKybCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
-        OpenKybCaseCommand openCmd = new OpenKybCaseCommand()
-                .partyId(partyId);
+    public Mono<UUID> openKybCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId,
+                                   ExecutionContext ctx) {
+        String businessName = ctx.getVariableAs(VAR_BUSINESS_NAME, String.class);
+        String registrationNumber = ctx.getVariableAs(VAR_REGISTRATION_NUMBER, String.class);
 
-        return kybApi.startKyb(openCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
-                .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
+        CreateKybCaseRequest request = new CreateKybCaseRequest()
+                .partyId(partyId)
+                .businessName(businessName)
+                .registrationNumber(registrationNumber);
+
+        return kybApi.createCase(request)
+                .map(response -> response.getCaseId())
                 .doOnNext(caseId -> log.info("Opened KYB case: caseId={}", caseId));
     }
 
@@ -166,14 +179,14 @@ public class BusinessOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateCode(TEMPLATE_BUSINESS_WELCOME)
-                .subject("Welcome to Firefly Business Banking");
+                .templateId(TEMPLATE_BUSINESS_WELCOME)
+                .putParametersItem("subject", "Welcome to Firefly Business Banking");
 
         if (cmd.getContactEmail() != null) {
-            notifCmd.recipientEmail(cmd.getContactEmail());
+            notifCmd.putParametersItem("email", cmd.getContactEmail());
         }
         if (cmd.getContactPhone() != null) {
-            notifCmd.recipientPhone(cmd.getContactPhone());
+            notifCmd.putParametersItem("phone", cmd.getContactPhone());
         }
 
         return notificationsApi.sendNotification(notifCmd)
@@ -199,8 +212,7 @@ public class BusinessOnboardingWorkflow {
                 .taxIdNumber(cmd.getTaxId())
                 .industryDescription(cmd.getBusinessActivity());
 
-        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd,
-                        UUID.randomUUID().toString(), null, null, null, null, null, null)
+        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd)
                 .then();
 
         // Register business address
@@ -210,8 +222,7 @@ public class BusinessOnboardingWorkflow {
                 .city(cmd.getCity())
                 .postalCode(cmd.getPostalCode());
 
-        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd,
-                        UUID.randomUUID().toString(), null, null, null, null, null, null)
+        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd)
                 .then();
 
         return updateLegalEntity.then(addAddress)
@@ -228,24 +239,24 @@ public class BusinessOnboardingWorkflow {
         SubmitUbosCommand cmd = mapSignalPayload(signalData, SubmitUbosCommand.class);
 
         if (cmd.getUbos() == null || cmd.getUbos().isEmpty()) {
+            log.info("No UBOs submitted for partyId={}, caseId={} — skipping", partyId, caseId);
             return Mono.empty();
         }
 
-        // Register each UBO as evidence in the KYB case via domain SDK
-        return Mono.when(cmd.getUbos().stream()
-                .map(ubo -> {
-                    AttachKybEvidenceCommand attachCmd = new AttachKybEvidenceCommand()
-                            .caseId(caseId)
-                            .partyId(partyId)
-                            .documentType("UBO_DECLARATION")
-                            .documentName(ubo.getFirstName() + " " + ubo.getLastName()
-                                    + " - " + ubo.getOwnershipPercentage() + "%");
-                    return kybApi.attachKybEvidence(caseId, attachCmd,
-                            UUID.randomUUID().toString(), null, null, null, null, null, null);
-                })
-                .toList())
-                .doOnSuccess(v -> log.info("Registered {} UBOs for partyId={}, caseId={}",
-                        cmd.getUbos().size(), partyId, caseId));
+        List<UboData> uboDataList = cmd.getUbos().stream()
+                .map(ubo -> new UboData()
+                        .ownershipPercentage(ubo.getOwnershipPercentage())
+                        .ownershipType("DIRECT"))
+                .toList();
+
+        RegisterUbosRequest request = new RegisterUbosRequest()
+                .partyId(partyId)
+                .ubos(uboDataList);
+
+        return kybApi.registerUbos(caseId, request)
+                .doOnNext(r -> log.info("Registered {} UBOs for partyId={}, caseId={}",
+                        uboDataList.size(), partyId, caseId))
+                .then();
     }
 
     // ─── Gate: Wait for corporate documents ───
@@ -258,22 +269,24 @@ public class BusinessOnboardingWorkflow {
         SubmitCorporateDocumentsCommand cmd = mapSignalPayload(signalData, SubmitCorporateDocumentsCommand.class);
 
         if (cmd.getDocuments() == null || cmd.getDocuments().isEmpty()) {
+            log.info("No corporate documents submitted for caseId={} — skipping", caseId);
             return Mono.empty();
         }
 
-        // Attach each document to the KYB case via domain SDK
-        return Mono.when(cmd.getDocuments().stream()
-                .map(doc -> {
-                    AttachKybEvidenceCommand attachCmd = new AttachKybEvidenceCommand()
-                            .caseId(caseId)
-                            .partyId(partyId)
-                            .documentType(doc.getDocumentType())
-                            .documentName(doc.getDocumentReference());
-                    return kybApi.attachKybEvidence(caseId, attachCmd, UUID.randomUUID().toString(), null, null, null, null, null, null);
-                })
-                .toList())
-                .doOnSuccess(v -> log.info("Attached {} corporate documents for caseId={}",
-                        cmd.getDocuments().size(), caseId));
+        List<DocumentData> documentDataList = cmd.getDocuments().stream()
+                .map(doc -> new DocumentData()
+                        .documentType(doc.getDocumentType())
+                        .documentReference(doc.getDocumentReference()))
+                .toList();
+
+        SubmitCorporateDocumentsRequest request = new SubmitCorporateDocumentsRequest()
+                .partyId(partyId)
+                .documents(documentDataList);
+
+        return kybApi.submitCorporateDocuments(caseId, request)
+                .doOnNext(r -> log.info("Submitted {} corporate documents for caseId={}",
+                        documentDataList.size(), caseId))
+                .then();
     }
 
     // ─── Gate: Wait for authorized signers ───
@@ -286,24 +299,24 @@ public class BusinessOnboardingWorkflow {
         SubmitAuthorizedSignersCommand cmd = mapSignalPayload(signalData, SubmitAuthorizedSignersCommand.class);
 
         if (cmd.getSigners() == null || cmd.getSigners().isEmpty()) {
+            log.info("No authorized signers submitted for partyId={}, caseId={} — skipping", partyId, caseId);
             return Mono.empty();
         }
 
-        // Register each authorized signer as evidence in the KYB case
-        return Mono.when(cmd.getSigners().stream()
-                .map(signer -> {
-                    AttachKybEvidenceCommand attachCmd = new AttachKybEvidenceCommand()
-                            .caseId(caseId)
-                            .partyId(partyId)
-                            .documentType("AUTHORIZED_SIGNER")
-                            .documentName(signer.getFirstName() + " " + signer.getLastName()
-                                    + " - " + signer.getRole());
-                    return kybApi.attachKybEvidence(caseId, attachCmd,
-                            UUID.randomUUID().toString(), null, null, null, null, null, null);
-                })
-                .toList())
-                .doOnSuccess(v -> log.info("Registered {} authorized signers for partyId={}, caseId={}",
-                        cmd.getSigners().size(), partyId, caseId));
+        List<DocumentData> signerDocuments = cmd.getSigners().stream()
+                .map(signer -> new DocumentData()
+                        .documentType("AUTHORIZED_SIGNER")
+                        .documentReference(signer.getPowerDocumentReference()))
+                .toList();
+
+        SubmitCorporateDocumentsRequest request = new SubmitCorporateDocumentsRequest()
+                .partyId(partyId)
+                .documents(signerDocuments);
+
+        return kybApi.submitCorporateDocuments(caseId, request)
+                .doOnNext(r -> log.info("Registered {} authorized signers for partyId={}, caseId={}",
+                        signerDocuments.size(), partyId, caseId))
+                .then();
     }
 
     // ─── Gate: Wait for KYB verification trigger ───
@@ -312,11 +325,7 @@ public class BusinessOnboardingWorkflow {
     @WaitForSignal(SIGNAL_KYB_TRIGGERED)
     public Mono<Void> triggerKybVerification(@Variable(VAR_KYB_CASE_ID) UUID caseId,
                                               @Variable(VAR_PARTY_ID) UUID partyId) {
-        VerifyKybCommand verifyCmd = new VerifyKybCommand()
-                .caseId(caseId)
-                .partyId(partyId);
-
-        return kybApi.verifyKyb(caseId, verifyCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
+        return kybApi.requestVerification(caseId, partyId)
                 .doOnNext(r -> log.info("Triggered KYB verification for caseId={}", caseId))
                 .then();
     }
@@ -326,28 +335,23 @@ public class BusinessOnboardingWorkflow {
     @WorkflowStep(id = STEP_VERIFY_KYB_APPROVED, dependsOn = STEP_TRIGGER_KYB)
     @WaitForSignal(SIGNAL_COMPLETION)
     public Mono<Void> verifyKybApproved(@Variable(VAR_KYB_CASE_ID) UUID caseId) {
-        return kybApi.getKybResult(caseId, null, null, null, null, null, null)
+        return kybApi.getCase(caseId)
                 .flatMap(response -> {
-                    if (response instanceof Map<?, ?> map) {
-                        String status = String.valueOf(map.get("verificationStatus"));
-                        if ("VERIFIED".equalsIgnoreCase(status) || "APPROVED".equalsIgnoreCase(status)
-                                || "true".equalsIgnoreCase(String.valueOf(map.get("success")))) {
-                            log.info("KYB verified for caseId={}", caseId);
-                            return Mono.<Void>empty();
-                        }
-                        return Mono.<Void>error(new BusinessException(
-                                HttpStatus.CONFLICT, "KYB_NOT_VERIFIED",
-                                "KYB not yet verified. Current status: " + status));
+                    String status = response.getCaseStatus();
+                    if ("VERIFIED".equalsIgnoreCase(status) || "APPROVED".equalsIgnoreCase(status)
+                            || "CLOSED".equalsIgnoreCase(status)) {
+                        log.info("KYB case approved for caseId={}, status={}", caseId, status);
+                        return Mono.<Void>empty();
                     }
                     return Mono.<Void>error(new BusinessException(
-                            HttpStatus.INTERNAL_SERVER_ERROR, "KYB_STATUS_UNKNOWN",
-                            "Unable to determine KYB status"));
+                            HttpStatus.CONFLICT, "KYB_NOT_VERIFIED",
+                            "KYB not yet verified. Current status: " + status));
                 });
     }
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYB_APPROVED)
     public Mono<Void> activateBusinessParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return businessesApi.reactivateBusiness(partyId, UUID.randomUUID().toString(), null, null, null, null, null, null)
+        return businessesApi.reactivateBusiness(partyId)
                 .doOnNext(r -> log.info("Activated business party: partyId={}", partyId))
                 .then();
     }
@@ -357,8 +361,8 @@ public class BusinessOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateCode(TEMPLATE_BUSINESS_COMPLETED)
-                .subject("Business Onboarding Complete");
+                .templateId(TEMPLATE_BUSINESS_COMPLETED)
+                .putParametersItem("subject", "Business Onboarding Complete");
 
         return notificationsApi.sendNotification(notifCmd)
                 .doOnNext(r -> log.info("Sent business completion notification for partyId={}", partyId))
@@ -369,7 +373,7 @@ public class BusinessOnboardingWorkflow {
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
         log.warn("Compensating: requesting closure for business party partyId={}", partyId);
-        return businessesApi.requestBusinessClosure(partyId, UUID.randomUUID().toString(), null, null, null, null, null, null)
+        return businessesApi.requestBusinessClosure(partyId)
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate business party closure partyId={}: {}", partyId, ex.getMessage());
@@ -378,16 +382,9 @@ public class BusinessOnboardingWorkflow {
     }
 
     public Mono<Void> compensateCancelKybCase(@FromStep(STEP_OPEN_KYB_CASE) UUID caseId) {
-        log.warn("Compensating: cancelling KYB case — caseId={}", caseId);
-        FailKybCommand failCmd = new FailKybCommand()
-                .caseId(caseId)
-                .reason("Business onboarding cancelled");
-        return kybApi.failKyb(caseId, failCmd, UUID.randomUUID().toString(), null, null, null, null, null, null)
-                .then()
-                .onErrorResume(ex -> {
-                    log.warn("Failed to compensate KYB case caseId={}: {}", caseId, ex.getMessage());
-                    return Mono.empty();
-                });
+        // KYB SDK does not expose a cancel/fail endpoint — log the orphaned case for manual follow-up.
+        log.warn("Compensating: KYB case caseId={} requires manual cancellation — no cancel endpoint in SDK", caseId);
+        return Mono.empty();
     }
 
     // ─── Journey state query ───

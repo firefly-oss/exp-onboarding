@@ -1,28 +1,38 @@
-# Build output
-target/
-
-# IDE files
-.idea/
-*.iml
-*.iws
-.vscode/
-.project
-.classpath
-.settings/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Compiled class files
+# Compiled class file
 *.class
 
-# Package files
+# Log file
+*.log
+# BlueJ files
+*.ctxt
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+# Package Files #
 *.jar
 *.war
+*.nar
 *.ear
 *.zip
 *.tar.gz
+*.rar
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*
+replay_pid*
+# IntelliJ IDEA specific files
+.idea/
+*.iml
+*.iws
+# Target folder
+target/
+# IntelliJ IDEA
+*.ipr
+# Refactoring backup directories
+.refactor-backup-*/
+*.refactor-backup-*
+
+# Additional Maven patterns added Fri Aug 29 20:28:01 CEST 2025
+**/target/generated-sources/
+**/target/generated-test-sources/
+**/target/generated-resources/
+.refactor-backup-*/
+.metadata-backup*

@@ -1,10 +1,13 @@
 package com.firefly.experience.onboarding.core.business.services.impl;
 
+import com.firefly.domain.people.sdk.api.BusinessesApi;
+import com.firefly.domain.people.sdk.model.UpdateBusinessCommand;
 import com.firefly.experience.onboarding.core.business.commands.InitiateBusinessOnboardingCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitAuthorizedSignersCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitCompanyDataCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitCorporateDocumentsCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitUbosCommand;
+import com.firefly.experience.onboarding.core.business.commands.UpdatePartialDataCommand;
 import com.firefly.experience.onboarding.core.business.queries.BusinessOnboardingStatusDTO;
 import com.firefly.experience.onboarding.core.business.queries.KybStatusDTO;
 import com.firefly.experience.onboarding.core.business.services.BusinessOnboardingService;
@@ -35,6 +38,7 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
     private final WorkflowEngine workflowEngine;
     private final SignalService signalService;
     private final WorkflowQueryService queryService;
+    private final BusinessesApi businessesApi;
 
     @Override
     public Mono<BusinessOnboardingStatusDTO> initiateOnboarding(InitiateBusinessOnboardingCommand command) {
@@ -104,5 +108,20 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
                         .caseId(journey.getKybCaseId())
                         .status(journey.getKybStatus())
                         .build());
+    }
+
+    @Override
+    public Mono<Void> updatePartialData(UUID onboardingId, UpdatePartialDataCommand command) {
+        return queryService.executeQuery(onboardingId.toString(), BusinessOnboardingWorkflow.QUERY_JOURNEY_STATUS)
+                .cast(BusinessOnboardingStatusDTO.class)
+                .flatMap(status -> {
+                    UpdateBusinessCommand updateCmd = new UpdateBusinessCommand()
+                            .partyId(status.getPartyId());
+                    if (command.getBusinessName() != null) {
+                        updateCmd.legalName(command.getBusinessName());
+                    }
+                    return businessesApi.updateBusiness(updateCmd).then();
+                })
+                .doOnSuccess(v -> log.info("Partial data updated for onboardingId={}", onboardingId));
     }
 }

@@ -1,156 +1,89 @@
 # exp-onboarding
 
-Backend-for-Frontend (BFF) experience-layer service that orchestrates customer onboarding journeys for both individuals and businesses. It composes calls to downstream domain services -- customer-people, KYC/KYB, and notifications -- through signal-driven workflows, exposing a step-by-step REST API that front-end applications consume to guide users through the full onboarding lifecycle.
-
----
+> Backend-for-Frontend service that orchestrates individual and business customer onboarding journeys through signal-driven workflows
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+- [Module Structure](#module-structure)
 - [Functional Verticals](#functional-verticals)
 - [API Endpoints](#api-endpoints)
-- [Workflow Details](#workflow-details)
 - [Domain SDK Dependencies](#domain-sdk-dependencies)
-- [Setup](#setup)
+- [Configuration](#configuration)
+- [Running Locally](#running-locally)
 - [Testing](#testing)
-
----
 
 ## Overview
 
-`exp-onboarding` is an `exp-*` (experience-layer) service in the Firefly platform. Unlike domain services that own data and enforce business rules, experience-layer services act as orchestration facades: they compose multiple domain calls into cohesive user journeys and present a simplified API tailored to front-end needs.
+`exp-onboarding` is the experience-layer service that guides new customers through the onboarding lifecycle. It exposes two independent journey APIs — one for individual (natural person) onboarding and one for business (legal entity) onboarding — each built on the Firefly signal-driven workflow engine.
 
-This service uses the **FireflyFramework Orchestration** engine with **signal-driven workflows** (`@Workflow` + `@WaitForSignal`). Each onboarding journey is modelled as a long-running workflow whose steps execute automatically until they reach a signal gate. The front-end advances the journey by calling successive REST endpoints, each of which delivers a signal to the workflow engine. This pattern provides:
+Unlike simple composition services that forward requests to domain SDKs and return, `exp-onboarding` models each journey as a long-running `@Workflow` that executes steps automatically until it reaches a `@WaitForSignal` gate. The workflow then pauses and persists its full execution state to Redis. When the frontend calls the next atomic endpoint, the service delivers a named signal to the workflow engine, which resumes execution from the checkpoint, runs the next group of steps against downstream domain SDKs, and pauses again at the following gate.
 
-- **Durable execution** -- workflow state is persisted to Redis, surviving process restarts.
-- **Step-level observability** -- each step's status (PENDING, RUNNING, DONE, FAILED) is queryable at any time.
-- **Automatic compensation** -- if a later step fails, compensatable steps roll back via their declared compensation methods.
-- **Timeout enforcement** -- workflows expire after a configurable deadline (24 h for individuals, 48 h for businesses).
-
----
+This architecture provides durable execution across process restarts, step-level observability via `@WorkflowQuery`, automatic compensation if a later step fails, and a clean recovery path: if the user abandons the journey and returns later, the frontend calls the status endpoint, reads `currentPhase` and `nextStep`, and navigates directly to the correct form without re-submitting any data.
 
 ## Architecture
 
-### Module Structure
+```
+Frontend / Mobile App
+         |
+         v
+exp-onboarding  (port 8096)
+         |
+         +---> WorkflowEngine / SignalService / WorkflowQueryService
+         |             |
+         |    ┌─────────┴──────────┐
+         |    v                    v
+         |  IndividualOnboarding  BusinessOnboarding
+         |    Workflow              Workflow
+         |
+         +---> domain-customer-people-sdk   (CustomersApi, BusinessesApi)
+         |
+         +---> domain-customer-kyc-kyb-sdk  (KycApi, KybApi)
+         |
+         +---> domain-common-notifications-sdk  (NotificationsApi)
+```
+
+Workflow state is persisted to Redis with key prefix `exp-onboarding:{correlationId}`, a TTL of 72 hours, and a retention period of 30 days for completed journeys.
+
+## Module Structure
 
 | Module | Purpose |
 |--------|---------|
-| `exp-onboarding-core` | Business logic: workflow definitions, service interfaces/implementations, commands, and query DTOs. |
-| `exp-onboarding-interfaces` | Interface adapters: bridges between web layer and core domain; depends on core. |
-| `exp-onboarding-infra` | Infrastructure: SDK client factories, configuration properties, external client setup. |
-| `exp-onboarding-web` | Deployable Spring Boot application: REST controllers, OpenAPI config, actuator endpoints. |
-| `exp-onboarding-sdk` | Client SDK placeholder for consumers of this service's API. |
-
-### Dependency Flow
-
-```
-web --> interfaces --> core --> infra
-```
-
-### Architecture Pattern: Signal-Driven Workflows
-
-Each onboarding vertical is implemented as a `@Workflow` class. The service layer starts a workflow (SYNC mode) and then delivers signals from subsequent REST calls. The workflow engine resumes execution at each `@WaitForSignal` gate, runs the corresponding step against downstream domain SDKs, and pauses again at the next gate.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     exp-onboarding (BFF)                    │
-│                                                             │
-│  Controller ──▶ Service ──▶ WorkflowEngine / SignalService  │
-│                                     │                       │
-│                              ┌──────┼──────┐                │
-│                              ▼      ▼      ▼                │
-│                         Workflow  Workflow  ...              │
-│                         Steps    Steps                      │
-└──────────────────────────┬──────┬──────┬────────────────────┘
-                           │      │      │
-                           ▼      ▼      ▼
-                ┌──────────┐ ┌────────┐ ┌──────────────┐
-                │ customer │ │  kyc/  │ │ notifications│
-                │  people  │ │  kyb   │ │              │
-                │  (SDK)   │ │ (SDK)  │ │    (SDK)     │
-                └──────────┘ └────────┘ └──────────────┘
-```
-
-### Technology Stack
-
-| Technology | Purpose |
-|------------|---------|
-| Java 25 | Language runtime |
-| Spring Boot (WebFlux) | Reactive web framework |
-| Project Reactor | Reactive streams |
-| FireflyFramework Orchestration | Signal-driven workflow engine (`@Workflow`, `@WaitForSignal`, `@WorkflowStep`) |
-| FireflyFramework Utils | Common utilities |
-| FireflyFramework Validators | Validation utilities |
-| FireflyFramework Web | Common web configurations and error handling |
-| Redis | Workflow state persistence |
-| domain-customer-people-sdk | SDK client for the Customer People domain service |
-| domain-customer-kyc-kyb-sdk | SDK client for the KYC/KYB domain service |
-| domain-common-notifications-sdk | SDK client for the Notifications domain service |
-| SpringDoc OpenAPI (WebFlux UI) | API documentation |
-| Micrometer + Prometheus | Metrics and monitoring |
-| MapStruct | Object mapping |
-| Lombok | Boilerplate reduction |
-
----
+| `exp-onboarding-interfaces` | Reserved for future shared contracts |
+| `exp-onboarding-core` | Workflow definitions (`IndividualOnboardingWorkflow`, `BusinessOnboardingWorkflow`), service interfaces and implementations, command DTOs per atomic endpoint, query DTOs (`JourneyStatusDTO`, `BusinessOnboardingStatusDTO`) |
+| `exp-onboarding-infra` | `CustomerPeopleClientFactory` (CustomersApi, BusinessesApi), `CustomerKycKybClientFactory` (KycApi, KybApi), `CommonNotificationsClientFactory` (NotificationsApi), and their `@ConfigurationProperties` |
+| `exp-onboarding-web` | `IndividualOnboardingController`, `BusinessOnboardingController`, Spring Boot application class, `application.yaml` |
+| `exp-onboarding-sdk` | Auto-generated reactive SDK from the OpenAPI spec |
 
 ## Functional Verticals
 
-### Individual Onboarding (7 endpoints)
-
-Guides a natural person through registration, personal-data collection, identity-document upload, KYC verification, and party activation.
-
-### Business Onboarding (9 endpoints)
-
-Guides a legal entity through registration, company-data collection, UBO declarations, corporate-document upload, authorized-signer submission, KYB verification, and party activation.
-
----
+| Vertical | Controller | Endpoints | Description |
+|----------|-----------|-----------|-------------|
+| Individual Onboarding | `IndividualOnboardingController` | 7 | Signal-driven `@Workflow` (24 h timeout) guiding a natural person from registration through KYC to activation |
+| Business Onboarding | `BusinessOnboardingController` | 9 | Signal-driven `@Workflow` (48 h timeout) guiding a legal entity from registration through KYB to activation |
 
 ## API Endpoints
 
-All endpoints return reactive `Mono<ResponseEntity<...>>` responses. The base API path prefix is `/api/v1/onboarding`.
+### Individual Onboarding
 
-### Individual Onboarding (`/api/v1/onboarding/individuals`)
+Base path: `/api/v1/onboarding/individuals`
 
-| Method | Path | Summary | Response Code |
-|--------|------|---------|---------------|
-| `POST` | `/api/v1/onboarding/individuals` | Initiate Onboarding -- registers the party, opens a KYC case, sends a welcome notification | `201 Created` |
-| `GET` | `/api/v1/onboarding/individuals/{onboardingId}` | Get Onboarding Status -- returns completed steps, current phase, and next expected action | `200 OK` |
-| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/personal-data` | Submit Personal Data -- submits address and personal details; advances past the personal-data gate | `200 OK` |
-| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/identity-documents` | Submit Identity Documents -- uploads identity documents for KYC evidence; advances past the identity-documents gate | `200 OK` |
-| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/kyc` | Trigger KYC Verification -- triggers KYC verification after documents are submitted | `202 Accepted` |
-| `GET` | `/api/v1/onboarding/individuals/{onboardingId}/kyc/status` | Get KYC Status -- retrieves the KYC verification status | `200 OK` |
-| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/completion` | Complete Onboarding -- verifies KYC approval, activates the party, sends a completion notification | `200 OK` |
+| Method | Path | Description | Response |
+|--------|------|-------------|----------|
+| `POST` | `/api/v1/onboarding/individuals` | Initiate onboarding — registers the party, opens a KYC case, sends a welcome notification; returns `onboardingId` | `201 Created` |
+| `GET` | `/api/v1/onboarding/individuals/{onboardingId}` | Get journey status — returns `currentPhase`, `completedSteps`, `nextStep`, and `kycVerificationStatus` | `200 OK` |
+| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/personal-data` | Submit personal data — delivers `personal-data-submitted` signal with address and personal details; advances past the personal-data gate | `200 OK` |
+| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/identity-documents` | Submit identity documents — delivers `identity-docs-submitted` signal with document metadata; attaches evidence to the KYC case | `200 OK` |
+| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/kyc` | Trigger KYC verification — delivers `kyc-triggered` signal; starts the verification process via the KYC/KYB domain service | `202 Accepted` |
+| `GET` | `/api/v1/onboarding/individuals/{onboardingId}/kyc/status` | Get KYC status — retrieves the current verification status from the KYC case | `200 OK` |
+| `POST` | `/api/v1/onboarding/individuals/{onboardingId}/completion` | Complete onboarding — delivers `completion-requested` signal; verifies KYC approval, activates the party, sends a completion notification | `200 OK` |
 
-### Business Onboarding (`/api/v1/onboarding/businesses`)
-
-| Method | Path | Summary | Response Code |
-|--------|------|---------|---------------|
-| `POST` | `/api/v1/onboarding/businesses` | Initiate Business Onboarding -- registers the business party, opens a KYB case, sends a welcome notification | `201 Created` |
-| `GET` | `/api/v1/onboarding/businesses/{onboardingId}` | Get Onboarding Status -- returns completed steps, current phase, and next expected action | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/company-data` | Submit Company Data -- submits legal name, tax ID, address, and business activity | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/ubos` | Submit Ultimate Beneficial Owners -- submits UBO declarations with ownership percentages and PEP status | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/corporate-documents` | Submit Corporate Documents -- submits articles of incorporation, board resolution, proof of address, tax certificate | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/authorized-signers` | Submit Authorized Signers -- submits legal representatives and power of attorney holders | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/kyb` | Trigger KYB Verification -- triggers Know Your Business verification after all data is submitted | `202 Accepted` |
-| `GET` | `/api/v1/onboarding/businesses/{onboardingId}/kyb/status` | Get KYB Status -- retrieves the KYB verification status | `200 OK` |
-| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/completion` | Complete Onboarding -- verifies KYB approval, activates the business party, sends a completion notification | `200 OK` |
-
----
-
-## Workflow Details
-
-### Individual Onboarding Workflow
-
-**Workflow ID:** `individual-onboarding`
-**Timeout:** 24 hours (86 400 000 ms)
-**Trigger Mode:** SYNC (blocks until the first signal gate)
-
-#### Step Execution Flow
+**Individual workflow signal gates:**
 
 ```
-Layer 0:  [register-party]                             ← compensatable (closure on failure)
-Layer 1:  [open-kyc-case] [send-welcome]               ← parallel; KYC case compensatable (fail on failure)
+Layer 0:  [register-party]                              ← compensatable
+Layer 1:  [open-kyc-case] [send-welcome]                ← parallel; KYC case compensatable
 Layer 2:  [receive-personal-data]                       ← @WaitForSignal("personal-data-submitted")
 Layer 3:  [receive-identity-docs]                       ← @WaitForSignal("identity-docs-submitted")
 Layer 4:  [trigger-kyc-verification]                    ← @WaitForSignal("kyc-triggered")
@@ -159,38 +92,26 @@ Layer 6:  [activate-party]
 Layer 7:  [send-completion-notification]
 ```
 
-#### Signals
+### Business Onboarding
 
-| Signal Name | Delivered By | Purpose |
-|-------------|-------------|---------|
-| `personal-data-submitted` | `POST .../personal-data` | Carries address and personal details; registers address via Customer People SDK |
-| `identity-docs-submitted` | `POST .../identity-documents` | Carries document metadata; attaches evidence to the KYC case |
-| `kyc-triggered` | `POST .../kyc` | Parameterless; triggers KYC verification via KYC/KYB SDK |
-| `completion-requested` | `POST .../completion` | Parameterless; verifies KYC is APPROVED, then activates the party |
+Base path: `/api/v1/onboarding/businesses`
 
-#### Compensation
+| Method | Path | Description | Response |
+|--------|------|-------------|----------|
+| `POST` | `/api/v1/onboarding/businesses` | Initiate business onboarding — registers the business party, opens a KYB case, sends a welcome notification; returns `onboardingId` | `201 Created` |
+| `GET` | `/api/v1/onboarding/businesses/{onboardingId}` | Get journey status — returns `currentPhase`, `completedSteps`, `nextStep`, and `kybStatus` | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/company-data` | Submit company data — delivers `company-data-submitted` signal with legal name, tax ID, address, and business activity | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/ubos` | Submit UBOs — delivers `ubos-submitted` signal with UBO declarations (ownership percentages, PEP status); attaches each as KYB evidence | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/corporate-documents` | Submit corporate documents — delivers `corporate-documents-submitted` signal; attaches articles of incorporation, board resolution, and related documents as KYB evidence | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/authorized-signers` | Submit authorized signers — delivers `authorized-signers-submitted` signal; attaches legal representatives and power of attorney holders as KYB evidence | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/kyb` | Trigger KYB verification — delivers `kyb-triggered` signal; starts the Know Your Business verification process | `202 Accepted` |
+| `GET` | `/api/v1/onboarding/businesses/{onboardingId}/kyb/status` | Get KYB status — retrieves the current verification status from the KYB case | `200 OK` |
+| `POST` | `/api/v1/onboarding/businesses/{onboardingId}/completion` | Complete business onboarding — delivers `completion-requested` signal; verifies KYB approval, activates the business party, sends a completion notification | `200 OK` |
 
-| Step | Compensation Method | Action |
-|------|-------------------|--------|
-| `register-party` | `compensateDeactivateParty` | Requests customer closure via Customer People SDK |
-| `open-kyc-case` | `compensateCancelKycCase` | Fails the KYC case with reason "Onboarding cancelled" |
-
-#### Workflow Query
-
-The `journeyStatus` query reconstructs a `JourneyStatusDTO` from persisted step statuses, exposing: `onboardingId`, `partyId`, `kycCaseId`, `currentPhase`, `completedSteps`, `nextStep`, and `kycVerificationStatus`.
-
----
-
-### Business Onboarding Workflow
-
-**Workflow ID:** `business-onboarding`
-**Timeout:** 48 hours (172 800 000 ms)
-**Trigger Mode:** SYNC
-
-#### Step Execution Flow
+**Business workflow signal gates:**
 
 ```
-Layer 0:  [register-business-party]                         ← compensatable (closure on failure)
+Layer 0:  [register-business-party]                         ← compensatable
 Layer 1:  [open-kyb-case] [send-welcome-notification]       ← parallel; KYB case compensatable
 Layer 2:  [receive-company-data]                            ← @WaitForSignal("company-data-submitted")
 Layer 3:  [receive-ubos]                                    ← @WaitForSignal("ubos-submitted")
@@ -202,122 +123,81 @@ Layer 8:  [activate-business-party]
 Layer 9:  [send-completion-notification]
 ```
 
-#### Signals
-
-| Signal Name | Delivered By | Purpose |
-|-------------|-------------|---------|
-| `company-data-submitted` | `POST .../company-data` | Carries legal name, trade name, tax ID, address; updates entity and registers address |
-| `ubos-submitted` | `POST .../ubos` | Carries UBO list; attaches each UBO as KYB evidence |
-| `corporate-documents-submitted` | `POST .../corporate-documents` | Carries document list; attaches each document as KYB evidence |
-| `authorized-signers-submitted` | `POST .../authorized-signers` | Carries signer list; attaches each signer as KYB evidence |
-| `kyb-triggered` | `POST .../kyb` | Parameterless; triggers KYB verification via KYC/KYB SDK |
-| `completion-requested` | `POST .../completion` | Parameterless; verifies KYB is APPROVED/VERIFIED, then activates the party |
-
-#### Compensation
-
-| Step | Compensation Method | Action |
-|------|-------------------|--------|
-| `register-business-party` | `compensateDeactivateParty` | Requests business closure via Customer People SDK |
-| `open-kyb-case` | `compensateCancelKybCase` | Fails the KYB case with reason "Business onboarding cancelled" |
-
-#### Workflow Query
-
-The `journeyStatus` query reconstructs a `BusinessOnboardingStatusDTO` from persisted step statuses, exposing: `onboardingId`, `partyId`, `kybCaseId`, `currentPhase`, `completedSteps`, `nextStep`, and `kybStatus`.
-
----
-
 ## Domain SDK Dependencies
 
-| SDK | Client Factory | APIs Exposed | Purpose |
-|-----|---------------|-------------|---------|
-| `domain-customer-people-sdk` | `CustomerPeopleClientFactory` | `CustomersApi`, `BusinessesApi` | Register individual/business parties, add addresses, activate/deactivate parties |
-| `domain-customer-kyc-kyb-sdk` | `CustomerKycKybClientFactory` | `KycApi`, `KybApi` | Open KYC/KYB cases, attach evidence, trigger verification, query case status |
-| `domain-common-notifications-sdk` | `CommonNotificationsClientFactory` | `NotificationsApi` | Send welcome and completion notifications |
+| SDK | ClientFactory | APIs Used | Purpose |
+|-----|--------------|-----------|---------|
+| `domain-customer-people-sdk` | `CustomerPeopleClientFactory` | `CustomersApi`, `BusinessesApi` | Register individual and business parties, add addresses, activate and deactivate parties |
+| `domain-customer-kyc-kyb-sdk` | `CustomerKycKybClientFactory` | `KycApi`, `KybApi` | Open KYC/KYB cases, attach evidence documents, trigger verification, query case status |
+| `domain-common-notifications-sdk` | `CommonNotificationsClientFactory` | `NotificationsApi` | Send welcome notifications at journey start and completion notifications at activation |
 
-Each factory reads its base path from `application.yaml` via a corresponding `@ConfigurationProperties` class:
+## Configuration
 
-| Properties Class | Config Prefix | Default Base Path |
-|-----------------|--------------|-------------------|
-| `CustomerPeopleProperties` | `api-configuration.domain-platform.customer-people` | `http://localhost:8081` |
-| `CustomerKycKybProperties` | `api-configuration.domain-platform.customer-kyc-kyb` | `http://localhost:8083` |
-| `CommonNotificationsProperties` | `api-configuration.domain-platform.common-notifications` | `http://localhost:8095` |
+```yaml
+server:
+  port: ${SERVER_PORT:8096}
 
----
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
 
-## Setup
+firefly:
+  orchestration:
+    persistence:
+      provider: redis
+      key-prefix: "exp-onboarding:"
+      key-ttl: 72h
+      retention-period: 30d
+      cleanup-interval: 6h
+    recovery:
+      enabled: true
+      stale-threshold: 1h
+  cqrs:
+    enabled: true
+    command.timeout: 30s
+    query:
+      timeout: 15s
+      caching-enabled: true
+      cache-ttl: 5m
 
-### Prerequisites
-
-- **Java 25** (or later)
-- **Apache Maven 3.9+**
-- **Redis** (used for workflow state persistence)
-- Access to the FireflyFramework Maven repository for `org.fireflyframework` dependencies
-- Access to the domain SDK artifacts (`domain-customer-people-sdk`, `domain-customer-kyc-kyb-sdk`, `domain-common-notifications-sdk`)
+api-configuration:
+  domain-platform:
+    customer-people:
+      base-path: ${CUSTOMER_PEOPLE_URL:http://localhost:8081}
+    customer-kyc-kyb:
+      base-path: ${CUSTOMER_KYC_KYB_URL:http://localhost:8083}
+    common-notifications:
+      base-path: ${COMMON_NOTIFICATIONS_URL:http://localhost:8095}
+```
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVER_PORT` | `8096` | HTTP port the server binds to |
+| `SERVER_PORT` | `8096` | HTTP server port |
 | `REDIS_HOST` | `localhost` | Redis host for workflow state persistence |
 | `REDIS_PORT` | `6379` | Redis port |
+| `CUSTOMER_PEOPLE_URL` | `http://localhost:8081` | Base URL for `domain-customer-people` |
+| `CUSTOMER_KYC_KYB_URL` | `http://localhost:8083` | Base URL for `domain-customer-kyc-kyb` |
+| `COMMON_NOTIFICATIONS_URL` | `http://localhost:8095` | Base URL for `domain-common-notifications` |
 
-### Configuration
-
-Key configuration sections in `application.yaml`:
-
-| Section | Description |
-|---------|-------------|
-| `firefly.orchestration.persistence` | Redis-backed workflow state persistence with 72 h TTL and 30 d retention |
-| `firefly.orchestration.recovery` | Automatic recovery of stale workflows (threshold: 1 h) |
-| `firefly.cqrs` | CQRS command/query configuration with timeouts, metrics, and query caching (5 min TTL) |
-| `firefly.stepevents` | Publishes step-level events for observability |
-| `api-configuration.domain-platform.*` | Base paths for downstream domain services |
-
-### Build
+## Running Locally
 
 ```bash
-# Full build
-mvn clean install
-
-# Skip tests
-mvn clean install -DskipTests
+# Prerequisites — ensure domain-customer-people, domain-customer-kyc-kyb,
+# domain-common-notifications, and Redis are running
+cd exp-onboarding
+mvn spring-boot:run -pl exp-onboarding-web
 ```
 
-### Run
+Server starts on port `8096`. Swagger UI: [http://localhost:8096/swagger-ui.html](http://localhost:8096/swagger-ui.html)
 
-```bash
-# Run via Spring Boot Maven plugin
-mvn -pl exp-onboarding-web spring-boot:run
-
-# Or run the packaged JAR
-java -jar exp-onboarding-web/target/exp-onboarding.jar
-```
-
-Once running, access the Swagger UI at `http://localhost:8096/webjars/swagger-ui/index.html` (disabled in the `pro` profile).
-
----
+Swagger UI is disabled in the `pro` profile.
 
 ## Testing
 
-The project includes unit tests for both service implementations and controllers:
-
-| Test Class | Module | Scope |
-|-----------|--------|-------|
-| `IndividualOnboardingServiceImplTest` | `exp-onboarding-core` | Tests signal delivery and workflow engine interactions for the individual journey |
-| `BusinessOnboardingServiceImplTest` | `exp-onboarding-core` | Tests signal delivery and workflow engine interactions for the business journey |
-| `IndividualOnboardingControllerTest` | `exp-onboarding-web` | Tests REST endpoint routing and response codes for individual onboarding |
-| `BusinessOnboardingControllerTest` | `exp-onboarding-web` | Tests REST endpoint routing and response codes for business onboarding |
-
-Run all tests:
-
 ```bash
-mvn test
+mvn clean verify
 ```
 
-Run tests for a specific module:
-
-```bash
-mvn -pl exp-onboarding-core test
-mvn -pl exp-onboarding-web test
-```
+Tests cover `IndividualOnboardingServiceImpl` and `BusinessOnboardingServiceImpl` (unit tests with mocked `WorkflowEngine`, `SignalService`, and `WorkflowQueryService`), and `IndividualOnboardingController` and `BusinessOnboardingController` (WebTestClient-based tests verifying HTTP status codes and response shapes for all 16 endpoints).

@@ -5,6 +5,7 @@ import com.firefly.experience.onboarding.core.business.commands.SubmitAuthorized
 import com.firefly.experience.onboarding.core.business.commands.SubmitCompanyDataCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitCorporateDocumentsCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitUbosCommand;
+import com.firefly.experience.onboarding.core.business.commands.UpdatePartialDataCommand;
 import com.firefly.experience.onboarding.core.business.queries.BusinessOnboardingStatusDTO;
 import com.firefly.experience.onboarding.core.business.queries.KybStatusDTO;
 import reactor.core.publisher.Mono;
@@ -42,4 +43,10 @@ public interface BusinessOnboardingService {
 
     /** Retrieve KYB verification status for the onboarding journey. */
     Mono<KybStatusDTO> getKybStatus(UUID onboardingId);
+
+    /**
+     * Apply partial corrections to an in-progress onboarding without advancing the workflow.
+     * Only non-null fields in the command are applied (contact info, business name).
+     */
+    Mono<Void> updatePartialData(UUID onboardingId, UpdatePartialDataCommand command);
 }

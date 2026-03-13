@@ -8,6 +8,7 @@ import com.firefly.experience.onboarding.core.business.commands.SubmitUbosComman
 import com.firefly.experience.onboarding.core.business.queries.BusinessOnboardingStatusDTO;
 import com.firefly.experience.onboarding.core.business.queries.KybStatusDTO;
 import com.firefly.experience.onboarding.core.business.workflows.BusinessOnboardingWorkflow;
+import com.firefly.domain.people.sdk.api.BusinessesApi;
 import org.fireflyframework.orchestration.core.persistence.ExecutionState;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
 import org.fireflyframework.orchestration.workflow.query.WorkflowQueryService;
@@ -43,6 +44,8 @@ class BusinessOnboardingServiceImplTest {
     @Mock
     private WorkflowQueryService queryService;
     @Mock
+    private BusinessesApi businessesApi;
+    @Mock
     private ExecutionState executionState;
 
     private BusinessOnboardingServiceImpl service;
@@ -64,7 +67,7 @@ class BusinessOnboardingServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new BusinessOnboardingServiceImpl(workflowEngine, signalService, queryService);
+        service = new BusinessOnboardingServiceImpl(workflowEngine, signalService, queryService, businessesApi);
     }
 
     @Test
