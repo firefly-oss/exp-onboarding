@@ -150,7 +150,7 @@ public class BusinessOnboardingWorkflow {
                         .legalName(cmd.getBusinessName())
                         .registrationNumber(cmd.getRegistrationNumber()));
 
-        return businessesApi.registerBusiness(registerCmd)
+        return businessesApi.registerBusiness(registerCmd, UUID.randomUUID().toString())
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered business party: partyId={}", partyId));
     }
@@ -168,7 +168,7 @@ public class BusinessOnboardingWorkflow {
                 .businessName(businessName)
                 .registrationNumber(registrationNumber);
 
-        return kybApi.createCase(request)
+        return kybApi.createCase(request, UUID.randomUUID().toString())
                 .map(response -> response.getCaseId())
                 .doOnNext(caseId -> log.info("Opened KYB case: caseId={}", caseId));
     }
@@ -179,17 +179,17 @@ public class BusinessOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateId(TEMPLATE_BUSINESS_WELCOME)
-                .putParametersItem("subject", "Welcome to Firefly Business Banking");
+                .templateCode(TEMPLATE_BUSINESS_WELCOME)
+                .subject("Welcome to Firefly Business Banking");
 
         if (cmd.getContactEmail() != null) {
-            notifCmd.putParametersItem("email", cmd.getContactEmail());
+            notifCmd.recipientEmail(cmd.getContactEmail());
         }
         if (cmd.getContactPhone() != null) {
-            notifCmd.putParametersItem("phone", cmd.getContactPhone());
+            notifCmd.recipientPhone(cmd.getContactPhone());
         }
 
-        return notificationsApi.sendNotification(notifCmd)
+        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Sent business welcome notification for partyId={}", partyId))
                 .then();
     }
@@ -212,7 +212,7 @@ public class BusinessOnboardingWorkflow {
                 .taxIdNumber(cmd.getTaxId())
                 .industryDescription(cmd.getBusinessActivity());
 
-        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd)
+        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd, UUID.randomUUID().toString())
                 .then();
 
         // Register business address
@@ -222,7 +222,7 @@ public class BusinessOnboardingWorkflow {
                 .city(cmd.getCity())
                 .postalCode(cmd.getPostalCode());
 
-        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd)
+        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd, UUID.randomUUID().toString())
                 .then();
 
         return updateLegalEntity.then(addAddress)
@@ -253,7 +253,7 @@ public class BusinessOnboardingWorkflow {
                 .partyId(partyId)
                 .ubos(uboDataList);
 
-        return kybApi.registerUbos(caseId, request)
+        return kybApi.registerUbos(caseId, request, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Registered {} UBOs for partyId={}, caseId={}",
                         uboDataList.size(), partyId, caseId))
                 .then();
@@ -283,7 +283,7 @@ public class BusinessOnboardingWorkflow {
                 .partyId(partyId)
                 .documents(documentDataList);
 
-        return kybApi.submitCorporateDocuments(caseId, request)
+        return kybApi.submitCorporateDocuments(caseId, request, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Submitted {} corporate documents for caseId={}",
                         documentDataList.size(), caseId))
                 .then();
@@ -313,7 +313,7 @@ public class BusinessOnboardingWorkflow {
                 .partyId(partyId)
                 .documents(signerDocuments);
 
-        return kybApi.submitCorporateDocuments(caseId, request)
+        return kybApi.submitCorporateDocuments(caseId, request, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Registered {} authorized signers for partyId={}, caseId={}",
                         signerDocuments.size(), partyId, caseId))
                 .then();
@@ -325,7 +325,7 @@ public class BusinessOnboardingWorkflow {
     @WaitForSignal(SIGNAL_KYB_TRIGGERED)
     public Mono<Void> triggerKybVerification(@Variable(VAR_KYB_CASE_ID) UUID caseId,
                                               @Variable(VAR_PARTY_ID) UUID partyId) {
-        return kybApi.requestVerification(caseId, partyId)
+        return kybApi.requestVerification(caseId, partyId, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Triggered KYB verification for caseId={}", caseId))
                 .then();
     }
@@ -335,7 +335,7 @@ public class BusinessOnboardingWorkflow {
     @WorkflowStep(id = STEP_VERIFY_KYB_APPROVED, dependsOn = STEP_TRIGGER_KYB)
     @WaitForSignal(SIGNAL_COMPLETION)
     public Mono<Void> verifyKybApproved(@Variable(VAR_KYB_CASE_ID) UUID caseId) {
-        return kybApi.getCase(caseId)
+        return kybApi.getCase(caseId, UUID.randomUUID().toString())
                 .flatMap(response -> {
                     String status = response.getCaseStatus();
                     if ("VERIFIED".equalsIgnoreCase(status) || "APPROVED".equalsIgnoreCase(status)
@@ -351,7 +351,7 @@ public class BusinessOnboardingWorkflow {
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYB_APPROVED)
     public Mono<Void> activateBusinessParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return businessesApi.reactivateBusiness(partyId)
+        return businessesApi.reactivateBusiness(partyId, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Activated business party: partyId={}", partyId))
                 .then();
     }
@@ -361,10 +361,10 @@ public class BusinessOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateId(TEMPLATE_BUSINESS_COMPLETED)
-                .putParametersItem("subject", "Business Onboarding Complete");
+                .templateCode(TEMPLATE_BUSINESS_COMPLETED)
+                .subject("Business Onboarding Complete");
 
-        return notificationsApi.sendNotification(notifCmd)
+        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Sent business completion notification for partyId={}", partyId))
                 .then();
     }
@@ -373,7 +373,7 @@ public class BusinessOnboardingWorkflow {
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
         log.warn("Compensating: requesting closure for business party partyId={}", partyId);
-        return businessesApi.requestBusinessClosure(partyId)
+        return businessesApi.requestBusinessClosure(partyId, UUID.randomUUID().toString())
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate business party closure partyId={}: {}", partyId, ex.getMessage());

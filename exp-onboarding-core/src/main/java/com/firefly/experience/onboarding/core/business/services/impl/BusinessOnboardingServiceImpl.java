@@ -120,7 +120,7 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
                     if (command.getBusinessName() != null) {
                         updateCmd.legalName(command.getBusinessName());
                     }
-                    return businessesApi.updateBusiness(updateCmd).then();
+                    return businessesApi.updateBusiness(updateCmd, UUID.randomUUID().toString()).then();
                 })
                 .doOnSuccess(v -> log.info("Partial data updated for onboardingId={}", onboardingId));
     }

@@ -142,7 +142,7 @@ public class IndividualOnboardingWorkflow {
             registerCmd.phones(List.of(new RegisterPhoneCommand().phoneNumber(cmd.getPhone())));
         }
 
-        return customersApi.registerCustomer(registerCmd)
+        return customersApi.registerCustomer(registerCmd, UUID.randomUUID().toString())
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered party: partyId={}", partyId));
     }
@@ -151,7 +151,7 @@ public class IndividualOnboardingWorkflow {
                   compensatable = true, compensationMethod = "compensateCancelKycCase")
     @SetVariable(VAR_KYC_CASE_ID)
     public Mono<UUID> openKycCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
-        return kycApi.openCase()
+        return kycApi.openCase(UUID.randomUUID().toString())
                 .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
                 .doOnNext(caseId -> log.info("Opened KYC case: caseId={}", caseId));
     }
@@ -162,15 +162,15 @@ public class IndividualOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateId(TEMPLATE_WELCOME)
-                .putParametersItem("subject", "Welcome to Firefly")
-                .putParametersItem("email", cmd.getEmail());
+                .templateCode(TEMPLATE_WELCOME)
+                .subject("Welcome to Firefly")
+                .recipientEmail(cmd.getEmail());
 
         if (cmd.getPhone() != null) {
-            notifCmd.putParametersItem("phone", cmd.getPhone());
+            notifCmd.recipientPhone(cmd.getPhone());
         }
 
-        return notificationsApi.sendNotification(notifCmd)
+        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Sent welcome notification for partyId={}", partyId))
                 .then();
     }
@@ -189,7 +189,7 @@ public class IndividualOnboardingWorkflow {
                 .city(cmd.getCity())
                 .postalCode(cmd.getPostalCode());
 
-        return customersApi.addCustomerAddress(partyId, addressCmd)
+        return customersApi.addCustomerAddress(partyId, addressCmd, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Submitted personal data for partyId={}", partyId))
                 .then();
     }
@@ -210,7 +210,7 @@ public class IndividualOnboardingWorkflow {
                 .documentContent(cmd.getDocumentContent())
                 .mimeType(cmd.getMimeType());
 
-        return kycApi.attachEvidence(caseId, attachCmd)
+        return kycApi.attachEvidence(caseId, attachCmd, UUID.randomUUID().toString())
                 .flatMap(response -> extractUuid(response, FIELD_DOCUMENT_ID))
                 .doOnNext(docId -> log.info("Attached identity document: documentId={}", docId));
     }
@@ -221,7 +221,7 @@ public class IndividualOnboardingWorkflow {
     @WaitForSignal(SIGNAL_KYC_TRIGGERED)
     public Mono<Void> triggerKycVerification(@Variable(VAR_KYC_CASE_ID) UUID caseId,
                                               @Variable(VAR_PARTY_ID) UUID partyId) {
-        return kycApi.verify(caseId)
+        return kycApi.verify(caseId, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Triggered KYC verification for caseId={}", caseId))
                 .then();
     }
@@ -238,7 +238,7 @@ public class IndividualOnboardingWorkflow {
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYC_APPROVED)
     public Mono<Void> activateParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return customersApi.reactivateCustomer(partyId)
+        return customersApi.reactivateCustomer(partyId, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Activated party: partyId={}", partyId))
                 .then();
     }
@@ -248,10 +248,10 @@ public class IndividualOnboardingWorkflow {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
-                .templateId(TEMPLATE_COMPLETED)
-                .putParametersItem("subject", "Onboarding Complete");
+                .templateCode(TEMPLATE_COMPLETED)
+                .subject("Onboarding Complete");
 
-        return notificationsApi.sendNotification(notifCmd)
+        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
                 .doOnNext(r -> log.info("Sent completion notification for partyId={}", partyId))
                 .then();
     }
@@ -260,7 +260,7 @@ public class IndividualOnboardingWorkflow {
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
         log.warn("Compensating: requesting closure for party partyId={}", partyId);
-        return customersApi.requestCustomerClosure(partyId)
+        return customersApi.requestCustomerClosure(partyId, UUID.randomUUID().toString())
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate party closure partyId={}: {}", partyId, ex.getMessage());
@@ -270,7 +270,7 @@ public class IndividualOnboardingWorkflow {
 
     public Mono<Void> compensateCancelKycCase(@FromStep(STEP_OPEN_KYC_CASE) UUID caseId) {
         log.warn("Compensating: cancelling KYC case caseId={}", caseId);
-        return kycApi.fail(caseId)
+        return kycApi.fail(caseId, UUID.randomUUID().toString())
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate KYC case caseId={}: {}", caseId, ex.getMessage());
