@@ -1,0 +1,829 @@
+openapi: 3.0.1
+info:
+  title: OpenAPI definition
+  version: v0
+servers:
+- url: http://localhost:18080
+  description: Generated server url
+tags:
+- name: Individual Onboarding
+  description: Atomic endpoints for the individual customer onboarding journey
+- name: Business Onboarding
+  description: Atomic endpoints for the business onboarding journey (Persona Jurídica).
+    Each POST/PATCH endpoint either starts the workflow or advances it via a signal
+    gate.
+paths:
+  /api/v1/onboarding/individuals/{onboardingId}/personal-data:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Submit Personal Data
+      description: Submit address and personal details for the onboarding individual.
+        Advances the journey past the personal-data gate.
+      operationId: submitPersonalData
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitPersonalDataCommand"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/onboarding/individuals/{onboardingId}/kyc:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Trigger KYC Verification
+      description: Trigger KYC verification for the onboarding individual after documents
+        are submitted. Advances the journey past the KYC gate.
+      operationId: triggerKyc
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/onboarding/individuals/{onboardingId}/identity-documents:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Submit Identity Documents
+      description: "Upload identity documents (passport, national ID, etc.) for KYC\
+        \ evidence. Advances the journey past the identity-documents gate."
+      operationId: submitIdentityDocuments
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitIdentityDocumentsCommand"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/onboarding/individuals/{onboardingId}/completion:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Complete Onboarding
+      description: "Complete the onboarding process — verifies KYC approval, activates\
+        \ the party, and sends a completion notification"
+      operationId: completeOnboarding
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/onboarding/individuals:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Initiate Onboarding
+      description: "Start a new individual onboarding journey — registers the party,\
+        \ opens a KYC case, and sends a welcome notification"
+      operationId: initiateOnboarding
+      parameters:
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiateOnboardingCommand"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JourneyStatusDTO"
+  /api/v1/onboarding/businesses/{onboardingId}/ubos:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Submit Ultimate Beneficial Owners
+      description: Submit UBO declarations with ownership percentages and PEP status.
+        Sends a signal to advance the journey past the UBOs gate.
+      operationId: submitUbos
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitUbosCommand"
+        required: true
+      responses:
+        "200":
+          description: UBOs accepted and workflow advanced
+          content:
+            application/json: {}
+        "400":
+          description: Invalid UBO payload
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: Journey is not at the UBOs gate
+  /api/v1/onboarding/businesses/{onboardingId}/kyb:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Trigger KYB Verification
+      description: "Trigger Know Your Business verification after all documents and\
+        \ data are submitted. Sends a signal to advance the journey past the KYB gate.\
+        \ KYB processing is asynchronous — poll GET /{id}/kyb/status for updates."
+      operationId: triggerKybVerification
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "202":
+          description: KYB verification triggered successfully
+          content:
+            application/json: {}
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: Journey is not at the KYB trigger gate
+  /api/v1/onboarding/businesses/{onboardingId}/corporate-documents:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Submit Corporate Documents
+      description: "Submit corporate documentation (articles of incorporation, board\
+        \ resolution, proof of address, tax certificate, commercial registry extract).\
+        \ Sends a signal to advance the journey past the documents gate."
+      operationId: submitCorporateDocuments
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitCorporateDocumentsCommand"
+        required: true
+      responses:
+        "200":
+          description: Corporate documents accepted and workflow advanced
+          content:
+            application/json: {}
+        "400":
+          description: Invalid documents payload
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: Journey is not at the corporate-documents gate
+  /api/v1/onboarding/businesses/{onboardingId}/completion:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Complete Onboarding
+      description: "Complete the business onboarding process — verifies KYB approval,\
+        \ activates the business party, and sends a completion notification. Fails\
+        \ with 409 if KYB has not been verified yet."
+      operationId: completeOnboarding_1
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Onboarding completed successfully
+          content:
+            application/json: {}
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: KYB not yet verified — cannot complete
+  /api/v1/onboarding/businesses/{onboardingId}/company-data:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Submit Company Data
+      description: "Submit company details (legal name, tax ID, address, business\
+        \ activity). Sends a signal to advance the journey past the company-data gate."
+      operationId: submitCompanyData
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitCompanyDataCommand"
+        required: true
+      responses:
+        "200":
+          description: Company data accepted and workflow advanced
+          content:
+            application/json: {}
+        "400":
+          description: Invalid company data payload
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: Journey is not at the company-data gate
+  /api/v1/onboarding/businesses/{onboardingId}/authorized-signers:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Submit Authorized Signers
+      description: "Submit authorized signers for the business (legal representatives,\
+        \ power of attorney holders). Sends a signal to advance the journey past the\
+        \ signers gate."
+      operationId: submitAuthorizedSigners
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitAuthorizedSignersCommand"
+        required: true
+      responses:
+        "200":
+          description: Authorized signers accepted and workflow advanced
+          content:
+            application/json: {}
+        "400":
+          description: Invalid signers payload
+        "404":
+          description: Onboarding journey not found
+        "409":
+          description: Journey is not at the authorized-signers gate
+  /api/v1/onboarding/businesses:
+    post:
+      tags:
+      - Business Onboarding
+      summary: Initiate Business Onboarding
+      description: "Start a new business onboarding journey — registers the business\
+        \ party, opens a KYB case, and sends a welcome notification. Blocks until\
+        \ the first signal gate and returns the initial status."
+      operationId: initiateOnboarding_1
+      parameters:
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitiateBusinessOnboardingCommand"
+        required: true
+      responses:
+        "201":
+          description: Onboarding journey started successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessOnboardingResponse"
+        "400":
+          description: Invalid request payload
+        "409":
+          description: Duplicate onboarding already in progress for this business
+  /api/v1/onboarding/businesses/{onboardingId}:
+    get:
+      tags:
+      - Business Onboarding
+      summary: Get Onboarding Status
+      description: "Retrieve the current state of a business onboarding process. Returns\
+        \ completed steps, current phase, and next expected action. Use this to resume\
+        \ an interrupted journey."
+      operationId: getOnboardingStatus
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Journey status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BusinessOnboardingResponse"
+        "404":
+          description: Onboarding journey not found
+    patch:
+      tags:
+      - Business Onboarding
+      summary: Update Partial Data
+      description: "Apply partial corrections to an in-progress business onboarding\
+        \ journey (e.g. contact e-mail, phone, or business name). Does NOT advance\
+        \ the workflow — use the dedicated step endpoints for that."
+      operationId: updatePartialData
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartialDataCommand"
+        required: true
+      responses:
+        "200":
+          description: Partial data updated successfully
+          content:
+            application/json: {}
+        "400":
+          description: Invalid request payload
+        "404":
+          description: Onboarding journey not found
+  /api/v1/onboarding/individuals/{onboardingId}/kyc/status:
+    get:
+      tags:
+      - Individual Onboarding
+      summary: Get KYC Status
+      description: Retrieve the KYC verification status for the onboarding individual
+      operationId: getKycStatus
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KycStatusDTO"
+  /api/v1/onboarding/individuals/{onboardingId}:
+    get:
+      tags:
+      - Individual Onboarding
+      summary: Get Onboarding Status
+      description: "Retrieve the current state of an individual onboarding process.\
+        \ Returns completed steps, current phase, and next expected action."
+      operationId: getOnboardingStatus_1
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JourneyStatusDTO"
+  /api/v1/onboarding/businesses/{onboardingId}/kyb/status:
+    get:
+      tags:
+      - Business Onboarding
+      summary: Get KYB Status
+      description: "Retrieve the KYB verification status for the business onboarding\
+        \ journey. Possible values: NOT_STARTED, CASE_OPENED, IN_PROGRESS, VERIFIED."
+      operationId: getKybStatus
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: KYB status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KybStatusResponse"
+        "404":
+          description: Onboarding journey not found
+components:
+  schemas:
+    SubmitPersonalDataCommand:
+      type: object
+      properties:
+        dateOfBirth:
+          type: string
+        nationality:
+          type: string
+        countryOfResidence:
+          type: string
+        addressLine1:
+          type: string
+        addressLine2:
+          type: string
+        city:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+        taxIdNumber:
+          type: string
+    SubmitIdentityDocumentsCommand:
+      required:
+      - documentNumber
+      - documentType
+      type: object
+      properties:
+        documentType:
+          minLength: 1
+          type: string
+        documentNumber:
+          minLength: 1
+          type: string
+        documentContent:
+          type: string
+        mimeType:
+          type: string
+    InitiateOnboardingCommand:
+      required:
+      - email
+      - firstName
+      - lastName
+      type: object
+      properties:
+        firstName:
+          minLength: 1
+          type: string
+        lastName:
+          minLength: 1
+          type: string
+        email:
+          minLength: 1
+          type: string
+        phone:
+          type: string
+        nationalIdNumber:
+          type: string
+        dueDiligenceLevel:
+          type: string
+    JourneyStatusDTO:
+      type: object
+      properties:
+        onboardingId:
+          type: string
+          format: uuid
+        partyId:
+          type: string
+          format: uuid
+        kycCaseId:
+          type: string
+          format: uuid
+        currentPhase:
+          type: string
+        completedSteps:
+          type: array
+          items:
+            type: string
+        nextStep:
+          type: string
+        kycVerificationStatus:
+          type: string
+    SubmitUbosCommand:
+      type: object
+      properties:
+        ubos:
+          type: array
+          items:
+            $ref: "#/components/schemas/UboEntry"
+    UboEntry:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        documentType:
+          type: string
+        documentNumber:
+          type: string
+        ownershipPercentage:
+          type: number
+        pep:
+          type: boolean
+    CorporateDocumentEntry:
+      type: object
+      properties:
+        documentType:
+          type: string
+        documentReference:
+          type: string
+    SubmitCorporateDocumentsCommand:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/CorporateDocumentEntry"
+    SubmitCompanyDataCommand:
+      type: object
+      properties:
+        legalName:
+          type: string
+        tradeName:
+          type: string
+        incorporationDate:
+          type: string
+          format: date
+        businessType:
+          type: string
+        taxId:
+          type: string
+        addressLine1:
+          type: string
+        addressLine2:
+          type: string
+        city:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+        businessActivity:
+          type: string
+    SignerEntry:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        documentType:
+          type: string
+        documentNumber:
+          type: string
+        role:
+          type: string
+        powerDocumentReference:
+          type: string
+    SubmitAuthorizedSignersCommand:
+      type: object
+      properties:
+        signers:
+          type: array
+          items:
+            $ref: "#/components/schemas/SignerEntry"
+    InitiateBusinessOnboardingCommand:
+      required:
+      - businessName
+      - countryOfIncorporation
+      - registrationNumber
+      type: object
+      properties:
+        businessName:
+          minLength: 1
+          type: string
+        registrationNumber:
+          minLength: 1
+          type: string
+        countryOfIncorporation:
+          minLength: 1
+          type: string
+        contactEmail:
+          type: string
+        contactPhone:
+          type: string
+        tenantId:
+          type: string
+    BusinessOnboardingResponse:
+      type: object
+      properties:
+        onboardingId:
+          type: string
+          format: uuid
+        partyId:
+          type: string
+          format: uuid
+        kybCaseId:
+          type: string
+          format: uuid
+        currentPhase:
+          type: string
+        completedSteps:
+          type: array
+          items:
+            type: string
+        nextStep:
+          type: string
+        kybStatus:
+          type: string
+    UpdatePartialDataCommand:
+      type: object
+      properties:
+        businessName:
+          type: string
+        contactEmail:
+          type: string
+        contactPhone:
+          type: string
+    KycStatusDTO:
+      type: object
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        status:
+          type: string
+    KybStatusResponse:
+      type: object
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        status:
+          type: string
