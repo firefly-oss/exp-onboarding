@@ -40,13 +40,13 @@ firefly:
 api-configuration:
   domain-platform:
     customer-people:
-      base-path: http://localhost:8081
+      base-path: ${ENDPOINT_DOMAIN_CUSTOMER_PEOPLE:http://localhost:8081}
       timeout: 5s
     customer-kyc-kyb:
-      base-path: http://localhost:8083
+      base-path: ${ENDPOINT_DOMAIN_CUSTOMER_KYC_KYB:http://localhost:8083}
       timeout: 10s
     common-notifications:
-      base-path: http://localhost:8082
+      base-path: ${ENDPOINT_DOMAIN_COMMON_NOTIFICATIONS:http://localhost:8082}
       timeout: 5s
 
 springdoc:
