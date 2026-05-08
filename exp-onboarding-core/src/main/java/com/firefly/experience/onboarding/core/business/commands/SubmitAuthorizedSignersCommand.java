@@ -1,5 +1,7 @@
 package com.firefly.experience.onboarding.core.business.commands;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,6 +18,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class SubmitAuthorizedSignersCommand {
+    @Valid
     private List<SignerEntry> signers;
 
     @Data
@@ -29,5 +32,21 @@ public class SubmitAuthorizedSignersCommand {
         private String documentNumber;
         private String role;
         private String powerDocumentReference;
+
+        /**
+         * Signer email address.
+         */
+        @Email(message = "email must be a valid email address")
+        private String email;
+
+        /**
+         * Whether this signer is authorized to sign on behalf of the legal entity.
+         */
+        private Boolean signingAuthorized;
+
+        /**
+         * Whether this signer is a Politically Exposed Person.
+         */
+        private Boolean isPep;
     }
 }

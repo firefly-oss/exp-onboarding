@@ -11,11 +11,15 @@ import com.firefly.domain.people.sdk.model.RegisterEmailCommand;
 import com.firefly.domain.people.sdk.model.RegisterNaturalPersonCommand;
 import com.firefly.domain.people.sdk.model.RegisterPartyCommand;
 import com.firefly.domain.people.sdk.model.RegisterPhoneCommand;
+import com.firefly.domain.people.sdk.model.UpdateCustomerCommand;
 import com.firefly.experience.onboarding.core.individual.commands.InitiateOnboardingCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitIdentityDocumentsCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDTO;
+import com.firefly.experience.onboarding.core.util.IdempotencyKeys;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import org.fireflyframework.orchestration.core.argument.FromStep;
 import org.fireflyframework.orchestration.core.argument.Input;
 import org.fireflyframework.orchestration.core.argument.SetVariable;
@@ -38,7 +42,9 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Signal-driven workflow modelling the complete individual onboarding journey.
@@ -122,13 +128,16 @@ public class IndividualOnboardingWorkflow {
     private final KycApi kycApi;
     private final NotificationsApi notificationsApi;
     private final ObjectMapper objectMapper;
+    private final Validator validator;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
+
+    public static final String INPUT_COMMAND = "command";
 
     @WorkflowStep(id = STEP_REGISTER_PARTY, compensatable = true,
                   compensationMethod = "compensateDeactivateParty")
     @SetVariable(VAR_PARTY_ID)
-    public Mono<UUID> registerParty(@Input InitiateOnboardingCommand cmd) {
+    public Mono<UUID> registerParty(@Input(INPUT_COMMAND) InitiateOnboardingCommand cmd) {
         RegisterCustomerCommand registerCmd = new RegisterCustomerCommand()
                 .party(new RegisterPartyCommand()
                         .partyKind(RegisterPartyCommand.PartyKindEnum.INDIVIDUAL)
@@ -142,7 +151,13 @@ public class IndividualOnboardingWorkflow {
             registerCmd.phones(List.of(new RegisterPhoneCommand().phoneNumber(cmd.getPhone())));
         }
 
-        return customersApi.registerCustomer(registerCmd, UUID.randomUUID().toString())
+        // Email is the natural identifier of an individual customer registration
+        // request: replaying the same onboarding submission must not create a
+        // second customer row downstream.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, STEP_REGISTER_PARTY, cmd.getEmail());
+
+        return customersApi.registerCustomer(registerCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered party: partyId={}", partyId));
     }
@@ -151,14 +166,18 @@ public class IndividualOnboardingWorkflow {
                   compensatable = true, compensationMethod = "compensateCancelKycCase")
     @SetVariable(VAR_KYC_CASE_ID)
     public Mono<UUID> openKycCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
-        return kycApi.openCase(UUID.randomUUID().toString())
+        // partyId is the per-execution stable anchor (set by step 0).
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_OPEN_KYC_CASE);
+
+        return kycApi.openCase(idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
                 .doOnNext(caseId -> log.info("Opened KYC case: caseId={}", caseId));
     }
 
     @WorkflowStep(id = STEP_SEND_WELCOME, dependsOn = STEP_REGISTER_PARTY)
     public Mono<Void> sendWelcomeNotification(@FromStep(STEP_REGISTER_PARTY) UUID partyId,
-                                               @Input InitiateOnboardingCommand cmd) {
+                                               @Input(INPUT_COMMAND) InitiateOnboardingCommand cmd) {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
@@ -170,7 +189,10 @@ public class IndividualOnboardingWorkflow {
             notifCmd.recipientPhone(cmd.getPhone());
         }
 
-        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_SEND_WELCOME);
+
+        return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent welcome notification for partyId={}", partyId))
                 .then();
     }
@@ -182,16 +204,57 @@ public class IndividualOnboardingWorkflow {
     @WaitForSignal(SIGNAL_PERSONAL_DATA)
     public Mono<Void> receivePersonalData(@Variable(VAR_PARTY_ID) UUID partyId,
                                            Object signalData) {
-        SubmitPersonalDataCommand cmd = mapSignalPayload(signalData, SubmitPersonalDataCommand.class);
-        RegisterAddressCommand addressCmd = new RegisterAddressCommand()
-                .line1(cmd.getAddressLine1())
-                .line2(cmd.getAddressLine2())
-                .city(cmd.getCity())
-                .postalCode(cmd.getPostalCode());
+        return Mono.defer(() -> {
+            SubmitPersonalDataCommand cmd = mapAndValidateSignalPayload(signalData, SubmitPersonalDataCommand.class);
+            RegisterAddressCommand addressCmd = new RegisterAddressCommand()
+                    .line1(cmd.getAddressLine1())
+                    .line2(cmd.getAddressLine2())
+                    .city(cmd.getCity())
+                    .postalCode(cmd.getPostalCode());
 
-        return customersApi.addCustomerAddress(partyId, addressCmd, UUID.randomUUID().toString())
-                .doOnNext(r -> log.info("Submitted personal data for partyId={}", partyId))
-                .then();
+            String addressKey = IdempotencyKeys.of(
+                    WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_PERSONAL_DATA, "add-address");
+
+            Mono<Void> addAddress = customersApi.addCustomerAddress(partyId, addressCmd, addressKey)
+                    .then();
+
+            // BE-5a: propagate maritalStatus + numberOfChildren to the natural-person record only
+            // when at least one of the fields is provided.
+            boolean hasMaritalStatus = cmd.getMaritalStatus() != null && !cmd.getMaritalStatus().isBlank();
+            boolean hasNumberOfChildren = cmd.getNumberOfChildren() != null;
+
+            if (!hasMaritalStatus && !hasNumberOfChildren) {
+                return addAddress
+                        .doOnSuccess(v -> log.info("Submitted personal data for partyId={}", partyId));
+            }
+
+            UpdateCustomerCommand updateCmd = new UpdateCustomerCommand().partyId(partyId);
+            if (hasMaritalStatus) {
+                updateCmd.maritalStatus(toMaritalStatusEnum(cmd.getMaritalStatus()));
+            }
+            if (hasNumberOfChildren) {
+                updateCmd.numberOfChildren(cmd.getNumberOfChildren());
+            }
+
+            String updateKey = IdempotencyKeys.of(
+                    WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_PERSONAL_DATA, "update-customer");
+
+            Mono<Void> updateCustomer = customersApi.updateCustomer(updateCmd, updateKey)
+                    .then();
+
+            return addAddress.then(updateCustomer)
+                    .doOnSuccess(v -> log.info("Submitted personal data for partyId={}", partyId));
+        });
+    }
+
+    private UpdateCustomerCommand.MaritalStatusEnum toMaritalStatusEnum(String value) {
+        try {
+            return UpdateCustomerCommand.MaritalStatusEnum.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_MARITAL_STATUS",
+                    "Marital status '" + value + "' is not supported by the customer domain. "
+                            + "Allowed values: SINGLE, MARRIED, SEPARATED, DIVORCED, WIDOWED.");
+        }
     }
 
     // ─── Gate: Wait for identity documents ───
@@ -201,7 +264,7 @@ public class IndividualOnboardingWorkflow {
     public Mono<UUID> receiveIdentityDocuments(@Variable(VAR_KYC_CASE_ID) UUID caseId,
                                                 @Variable(VAR_PARTY_ID) UUID partyId,
                                                 Object signalData) {
-        SubmitIdentityDocumentsCommand cmd = mapSignalPayload(signalData,
+        SubmitIdentityDocumentsCommand cmd = mapAndValidateSignalPayload(signalData,
                 SubmitIdentityDocumentsCommand.class);
         AttachEvidenceCommand attachCmd = new AttachEvidenceCommand()
                 .caseId(caseId)
@@ -210,7 +273,13 @@ public class IndividualOnboardingWorkflow {
                 .documentContent(cmd.getDocumentContent())
                 .mimeType(cmd.getMimeType());
 
-        return kycApi.attachEvidence(caseId, attachCmd, UUID.randomUUID().toString())
+        // Anchor on partyId + the document number so that re-submitting the same
+        // identity document does not create a duplicate evidence row downstream.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_IDENTITY_DOCS,
+                cmd.getDocumentType(), cmd.getDocumentNumber());
+
+        return kycApi.attachEvidence(caseId, attachCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_DOCUMENT_ID))
                 .doOnNext(docId -> log.info("Attached identity document: documentId={}", docId));
     }
@@ -221,7 +290,10 @@ public class IndividualOnboardingWorkflow {
     @WaitForSignal(SIGNAL_KYC_TRIGGERED)
     public Mono<Void> triggerKycVerification(@Variable(VAR_KYC_CASE_ID) UUID caseId,
                                               @Variable(VAR_PARTY_ID) UUID partyId) {
-        return kycApi.verify(caseId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_TRIGGER_KYC_VERIFICATION);
+
+        return kycApi.verify(caseId, idempotencyKey)
                 .doOnNext(r -> log.info("Triggered KYC verification for caseId={}", caseId))
                 .then();
     }
@@ -238,7 +310,10 @@ public class IndividualOnboardingWorkflow {
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYC_APPROVED)
     public Mono<Void> activateParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return customersApi.reactivateCustomer(partyId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_ACTIVATE_PARTY);
+
+        return customersApi.reactivateCustomer(partyId, idempotencyKey)
                 .doOnNext(r -> log.info("Activated party: partyId={}", partyId))
                 .then();
     }
@@ -251,7 +326,10 @@ public class IndividualOnboardingWorkflow {
                 .templateCode(TEMPLATE_COMPLETED)
                 .subject("Onboarding Complete");
 
-        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_SEND_COMPLETION);
+
+        return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent completion notification for partyId={}", partyId))
                 .then();
     }
@@ -260,7 +338,10 @@ public class IndividualOnboardingWorkflow {
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
         log.warn("Compensating: requesting closure for party partyId={}", partyId);
-        return customersApi.requestCustomerClosure(partyId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), "compensate-deactivate-party");
+
+        return customersApi.requestCustomerClosure(partyId, idempotencyKey)
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate party closure partyId={}: {}", partyId, ex.getMessage());
@@ -270,7 +351,10 @@ public class IndividualOnboardingWorkflow {
 
     public Mono<Void> compensateCancelKycCase(@FromStep(STEP_OPEN_KYC_CASE) UUID caseId) {
         log.warn("Compensating: cancelling KYC case caseId={}", caseId);
-        return kycApi.fail(caseId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, caseId.toString(), "compensate-cancel-kyc-case");
+
+        return kycApi.fail(caseId, idempotencyKey)
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate KYC case caseId={}: {}", caseId, ex.getMessage());
@@ -373,6 +457,24 @@ public class IndividualOnboardingWorkflow {
 
     private <T> T mapSignalPayload(Object signalData, Class<T> type) {
         return objectMapper.convertValue(signalData, type);
+    }
+
+    /**
+     * Deserialises the raw signal payload into the target command type and runs Jakarta Bean
+     * Validation on the result. Constraint violations are surfaced as a {@code 400 BAD_REQUEST}
+     * {@link BusinessException} with code {@code INVALID_SIGNAL_PAYLOAD}, ensuring malformed
+     * signal payloads are rejected at the workflow boundary before any domain SDK call is made.
+     */
+    private <T> T mapAndValidateSignalPayload(Object signalData, Class<T> type) {
+        T payload = mapSignalPayload(signalData, type);
+        Set<ConstraintViolation<T>> violations = validator.validate(payload);
+        if (!violations.isEmpty()) {
+            String message = violations.stream()
+                    .map(v -> v.getPropertyPath() + " " + v.getMessage())
+                    .collect(Collectors.joining("; "));
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD", message);
+        }
+        return payload;
     }
 
     /**

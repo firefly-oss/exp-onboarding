@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 @ExtendWith(MockitoExtension.class)
 class IndividualOnboardingServiceImplTest {
@@ -89,7 +90,12 @@ class IndividualOnboardingServiceImplTest {
                 })
                 .verifyComplete();
 
-        verify(workflowEngine).startWorkflow(eq(WORKFLOW_ID), any(Map.class), any(String.class), eq("api"), eq(false));
+        // Asserts QA Issue 2 fix: the workflow input map keys the command under
+        // INPUT_COMMAND so the @Input(INPUT_COMMAND) resolver can extract it.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(workflowEngine).startWorkflow(eq(WORKFLOW_ID), inputCaptor.capture(), any(String.class), eq("api"), eq(false));
+        assertThat(inputCaptor.getValue()).containsEntry(INPUT_COMMAND, cmd);
     }
 
     @Test

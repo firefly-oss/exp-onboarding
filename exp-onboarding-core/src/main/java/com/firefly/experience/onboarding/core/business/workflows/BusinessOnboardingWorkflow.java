@@ -6,12 +6,17 @@ import com.firefly.domain.kyc.kyb.sdk.api.KybApi;
 import com.firefly.domain.kyc.kyb.sdk.model.CreateKybCaseRequest;
 import com.firefly.domain.kyc.kyb.sdk.model.DocumentData;
 import com.firefly.domain.kyc.kyb.sdk.model.RegisterUbosRequest;
+import com.firefly.domain.kyc.kyb.sdk.model.SignerData;
+import com.firefly.domain.kyc.kyb.sdk.model.SubmitAuthorizedSignersRequest;
 import com.firefly.domain.kyc.kyb.sdk.model.SubmitCorporateDocumentsRequest;
 import com.firefly.domain.kyc.kyb.sdk.model.UboData;
 import com.firefly.domain.people.sdk.api.BusinessesApi;
+import com.firefly.domain.people.sdk.api.CustomersApi;
 import com.firefly.domain.people.sdk.model.RegisterAddressCommand;
 import com.firefly.domain.people.sdk.model.RegisterBusinessCommand;
+import com.firefly.domain.people.sdk.model.RegisterCustomerCommand;
 import com.firefly.domain.people.sdk.model.RegisterLegalEntityCommand;
+import com.firefly.domain.people.sdk.model.RegisterNaturalPersonCommand;
 import com.firefly.domain.people.sdk.model.RegisterPartyCommand;
 import com.firefly.domain.people.sdk.model.UpdateBusinessCommand;
 import com.firefly.experience.onboarding.core.business.commands.InitiateBusinessOnboardingCommand;
@@ -20,7 +25,10 @@ import com.firefly.experience.onboarding.core.business.commands.SubmitCompanyDat
 import com.firefly.experience.onboarding.core.business.commands.SubmitCorporateDocumentsCommand;
 import com.firefly.experience.onboarding.core.business.commands.SubmitUbosCommand;
 import com.firefly.experience.onboarding.core.business.queries.BusinessOnboardingStatusDTO;
+import com.firefly.experience.onboarding.core.util.IdempotencyKeys;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import org.fireflyframework.orchestration.core.argument.FromStep;
 import org.fireflyframework.orchestration.core.argument.Input;
 import org.fireflyframework.orchestration.core.argument.SetVariable;
@@ -43,7 +51,9 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Signal-driven workflow modelling the complete business onboarding journey (Persona Jurídica).
@@ -128,16 +138,20 @@ public class BusinessOnboardingWorkflow {
     private static final String FIELD_CASE_ID = "caseId";
 
     private final BusinessesApi businessesApi;
+    private final CustomersApi customersApi;
     private final KybApi kybApi;
     private final NotificationsApi notificationsApi;
     private final ObjectMapper objectMapper;
+    private final Validator validator;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
+
+    public static final String INPUT_COMMAND = "command";
 
     @WorkflowStep(id = STEP_REGISTER_PARTY, compensatable = true,
                   compensationMethod = "compensateDeactivateParty")
     @SetVariable(VAR_PARTY_ID)
-    public Mono<UUID> registerBusinessParty(@Input InitiateBusinessOnboardingCommand cmd,
+    public Mono<UUID> registerBusinessParty(@Input(INPUT_COMMAND) InitiateBusinessOnboardingCommand cmd,
                                              ExecutionContext ctx) {
         ctx.putVariable(VAR_BUSINESS_NAME, cmd.getBusinessName());
         ctx.putVariable(VAR_REGISTRATION_NUMBER, cmd.getRegistrationNumber());
@@ -150,7 +164,13 @@ public class BusinessOnboardingWorkflow {
                         .legalName(cmd.getBusinessName())
                         .registrationNumber(cmd.getRegistrationNumber()));
 
-        return businessesApi.registerBusiness(registerCmd, UUID.randomUUID().toString())
+        // Deterministic key: a workflow replay of the same execution must produce
+        // the same key so the upstream registration is not duplicated. The
+        // correlation id is the per-execution stable anchor.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, ctx.getCorrelationId(), STEP_REGISTER_PARTY);
+
+        return businessesApi.registerBusiness(registerCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
                 .doOnNext(partyId -> log.info("Registered business party: partyId={}", partyId));
     }
@@ -168,14 +188,17 @@ public class BusinessOnboardingWorkflow {
                 .businessName(businessName)
                 .registrationNumber(registrationNumber);
 
-        return kybApi.createCase(request, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, ctx.getCorrelationId(), STEP_OPEN_KYB_CASE);
+
+        return kybApi.createCase(request, idempotencyKey)
                 .map(response -> response.getCaseId())
                 .doOnNext(caseId -> log.info("Opened KYB case: caseId={}", caseId));
     }
 
     @WorkflowStep(id = STEP_SEND_WELCOME, dependsOn = STEP_REGISTER_PARTY)
     public Mono<Void> sendWelcomeNotification(@FromStep(STEP_REGISTER_PARTY) UUID partyId,
-                                               @Input InitiateBusinessOnboardingCommand cmd) {
+                                               @Input(INPUT_COMMAND) InitiateBusinessOnboardingCommand cmd) {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
@@ -189,7 +212,12 @@ public class BusinessOnboardingWorkflow {
             notifCmd.recipientPhone(cmd.getContactPhone());
         }
 
-        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
+        // partyId is generated in step 0 and is the per-execution stable anchor
+        // for any notification/op tied to this onboarding journey.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_SEND_WELCOME);
+
+        return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent business welcome notification for partyId={}", partyId))
                 .then();
     }
@@ -201,18 +229,35 @@ public class BusinessOnboardingWorkflow {
     @WaitForSignal(SIGNAL_COMPANY_DATA)
     public Mono<Void> receiveCompanyData(@Variable(VAR_PARTY_ID) UUID partyId,
                                           Object signalData) {
-        SubmitCompanyDataCommand cmd = mapSignalPayload(signalData, SubmitCompanyDataCommand.class);
+        SubmitCompanyDataCommand cmd = mapAndValidateSignalPayload(signalData, SubmitCompanyDataCommand.class);
 
-        // Update the legal entity with full company details via domain SDK
+        // Update the legal entity with full company details via domain SDK.
+        // BE-5b: propagate the new corporate fields (employeeRange, annualRevenue,
+        // cnaeCode, contactName, contactPosition, contactEmail, contactPhone).
         UpdateBusinessCommand updateCmd = new UpdateBusinessCommand()
                 .partyId(partyId)
                 .legalName(cmd.getLegalName())
                 .tradeName(cmd.getTradeName())
                 .incorporationDate(cmd.getIncorporationDate())
                 .taxIdNumber(cmd.getTaxId())
-                .industryDescription(cmd.getBusinessActivity());
+                .industryDescription(cmd.getBusinessActivity())
+                .employeeRange(cmd.getNumberOfEmployees())
+                .annualRevenue(cmd.getAnnualRevenue())
+                .cnaeCode(cmd.getCnaeCode())
+                .contactName(cmd.getContactName())
+                .contactPosition(cmd.getContactPosition())
+                .contactEmail(cmd.getContactEmail())
+                .contactPhone(cmd.getContactPhone());
 
-        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd, UUID.randomUUID().toString())
+        // partyId is unique per workflow execution (minted in step 0). Combined
+        // with a per-call discriminator it is a stable idempotency anchor across
+        // signal-driven step replays.
+        String updateKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_COMPANY_DATA, "update-business");
+        String addressKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_COMPANY_DATA, "add-address");
+
+        Mono<Void> updateLegalEntity = businessesApi.updateBusiness(updateCmd, updateKey)
                 .then();
 
         // Register business address
@@ -222,7 +267,7 @@ public class BusinessOnboardingWorkflow {
                 .city(cmd.getCity())
                 .postalCode(cmd.getPostalCode());
 
-        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd, UUID.randomUUID().toString())
+        Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd, addressKey)
                 .then();
 
         return updateLegalEntity.then(addAddress)
@@ -236,27 +281,70 @@ public class BusinessOnboardingWorkflow {
     public Mono<Void> receiveUbos(@Variable(VAR_PARTY_ID) UUID partyId,
                                    @Variable(VAR_KYB_CASE_ID) UUID caseId,
                                    Object signalData) {
-        SubmitUbosCommand cmd = mapSignalPayload(signalData, SubmitUbosCommand.class);
+        SubmitUbosCommand cmd = mapAndValidateSignalPayload(signalData, SubmitUbosCommand.class);
 
         if (cmd.getUbos() == null || cmd.getUbos().isEmpty()) {
             log.info("No UBOs submitted for partyId={}, caseId={} — skipping", partyId, caseId);
             return Mono.empty();
         }
 
-        List<UboData> uboDataList = cmd.getUbos().stream()
-                .map(ubo -> new UboData()
+        // BE-5d: each UBO is a natural person and the core schema requires a non-null
+        // naturalPersonId on the UBO row. Register each UBO via the customer service
+        // first, then build UboData with the resolved naturalPersonId before submitting
+        // the ownership records to the KYB saga. Email and ownershipType from the front
+        // are propagated; ownershipType defaults to DIRECT when not provided.
+        return reactor.core.publisher.Flux.fromIterable(cmd.getUbos())
+                .concatMap(ubo -> resolveUboNaturalPersonId(ubo, partyId))
+                .collectList()
+                .flatMap(uboDataList -> {
+                    RegisterUbosRequest request = new RegisterUbosRequest()
+                            .partyId(partyId)
+                            .ubos(uboDataList);
+
+                    String idempotencyKey = IdempotencyKeys.of(
+                            WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_UBOS);
+
+                    return kybApi.registerUbos(caseId, request, idempotencyKey)
+                            .doOnNext(r -> log.info("Registered {} UBOs for partyId={}, caseId={}",
+                                    uboDataList.size(), partyId, caseId))
+                            .then();
+                });
+    }
+
+    /**
+     * Registers the UBO as a natural person via {@link CustomersApi#registerCustomer}
+     * and returns a {@link UboData} populated with the resolved party ID as
+     * {@code naturalPersonId}. The UBO's identity fields (firstName, lastName,
+     * documentNumber) are propagated to the natural-person record so the customer row
+     * carries a document-traceable identity (SEPBLAC requirement). The BE-5d
+     * ownership fields (ownershipPercentage, ownershipType, email) are propagated
+     * to the UBO record.
+     */
+    private Mono<UboData> resolveUboNaturalPersonId(SubmitUbosCommand.UboEntry ubo, UUID partyId) {
+        RegisterCustomerCommand registerCmd = new RegisterCustomerCommand()
+                .party(new RegisterPartyCommand()
+                        .partyKind(RegisterPartyCommand.PartyKindEnum.INDIVIDUAL)
+                        .sourceSystem(SOURCE_SYSTEM))
+                .naturalPerson(new RegisterNaturalPersonCommand()
+                        .givenName(ubo.getFirstName())
+                        .familyName1(ubo.getLastName())
+                        .taxIdNumber(ubo.getDocumentNumber()));
+
+        // Per-UBO deterministic key: same partyId + same UBO documentNumber must
+        // resolve to the same natural-person registration on every replay so the
+        // customer service deduplicates the row.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_UBOS,
+                "register-ubo-natural-person", ubo.getDocumentNumber());
+
+        return customersApi.registerCustomer(registerCmd, idempotencyKey)
+                .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
+                .doOnNext(naturalPersonId -> log.info("Registered UBO natural person: naturalPersonId={}", naturalPersonId))
+                .map(naturalPersonId -> new UboData()
+                        .naturalPersonId(naturalPersonId)
                         .ownershipPercentage(ubo.getOwnershipPercentage())
-                        .ownershipType("DIRECT"))
-                .toList();
-
-        RegisterUbosRequest request = new RegisterUbosRequest()
-                .partyId(partyId)
-                .ubos(uboDataList);
-
-        return kybApi.registerUbos(caseId, request, UUID.randomUUID().toString())
-                .doOnNext(r -> log.info("Registered {} UBOs for partyId={}, caseId={}",
-                        uboDataList.size(), partyId, caseId))
-                .then();
+                        .ownershipType(normaliseOwnershipType(ubo.getOwnershipType()))
+                        .email(ubo.getEmail()));
     }
 
     // ─── Gate: Wait for corporate documents ───
@@ -266,7 +354,7 @@ public class BusinessOnboardingWorkflow {
     public Mono<Void> receiveCorporateDocuments(@Variable(VAR_KYB_CASE_ID) UUID caseId,
                                                  @Variable(VAR_PARTY_ID) UUID partyId,
                                                  Object signalData) {
-        SubmitCorporateDocumentsCommand cmd = mapSignalPayload(signalData, SubmitCorporateDocumentsCommand.class);
+        SubmitCorporateDocumentsCommand cmd = mapAndValidateSignalPayload(signalData, SubmitCorporateDocumentsCommand.class);
 
         if (cmd.getDocuments() == null || cmd.getDocuments().isEmpty()) {
             log.info("No corporate documents submitted for caseId={} — skipping", caseId);
@@ -283,7 +371,12 @@ public class BusinessOnboardingWorkflow {
                 .partyId(partyId)
                 .documents(documentDataList);
 
-        return kybApi.submitCorporateDocuments(caseId, request, UUID.randomUUID().toString())
+        // partyId is the per-execution stable anchor; the step id discriminates
+        // this submission from other operations against the same case.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_CORPORATE_DOCS);
+
+        return kybApi.submitCorporateDocuments(caseId, request, idempotencyKey)
                 .doOnNext(r -> log.info("Submitted {} corporate documents for caseId={}",
                         documentDataList.size(), caseId))
                 .then();
@@ -296,27 +389,83 @@ public class BusinessOnboardingWorkflow {
     public Mono<Void> receiveAuthorizedSigners(@Variable(VAR_PARTY_ID) UUID partyId,
                                                 @Variable(VAR_KYB_CASE_ID) UUID caseId,
                                                 Object signalData) {
-        SubmitAuthorizedSignersCommand cmd = mapSignalPayload(signalData, SubmitAuthorizedSignersCommand.class);
+        SubmitAuthorizedSignersCommand cmd = mapAndValidateSignalPayload(signalData, SubmitAuthorizedSignersCommand.class);
 
         if (cmd.getSigners() == null || cmd.getSigners().isEmpty()) {
             log.info("No authorized signers submitted for partyId={}, caseId={} — skipping", partyId, caseId);
             return Mono.empty();
         }
 
-        List<DocumentData> signerDocuments = cmd.getSigners().stream()
-                .map(signer -> new DocumentData()
-                        .documentType("AUTHORIZED_SIGNER")
-                        .documentReference(signer.getPowerDocumentReference()))
-                .toList();
+        // BE-5c: each authorized signer is a natural person. Register them via the
+        // customer service first, then build SignerData with the resolved attorneyId
+        // before submitting the powers of attorney to the KYB saga.
+        return reactor.core.publisher.Flux.fromIterable(cmd.getSigners())
+                .concatMap(signer -> resolveSignerAttorneyId(signer, partyId))
+                .collectList()
+                .flatMap(signerDataList -> {
+                    SubmitAuthorizedSignersRequest request = new SubmitAuthorizedSignersRequest()
+                            .partyId(partyId)
+                            .signers(signerDataList);
 
-        SubmitCorporateDocumentsRequest request = new SubmitCorporateDocumentsRequest()
-                .partyId(partyId)
-                .documents(signerDocuments);
+                    String idempotencyKey = IdempotencyKeys.of(
+                            WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_AUTHORIZED_SIGNERS);
 
-        return kybApi.submitCorporateDocuments(caseId, request, UUID.randomUUID().toString())
-                .doOnNext(r -> log.info("Registered {} authorized signers for partyId={}, caseId={}",
-                        signerDocuments.size(), partyId, caseId))
-                .then();
+                    return kybApi.submitAuthorizedSigners(caseId, request, idempotencyKey)
+                            .doOnNext(r -> log.info("Registered {} authorized signers for partyId={}, caseId={}",
+                                    signerDataList.size(), partyId, caseId))
+                            .then();
+                });
+    }
+
+    /**
+     * Registers the signer as a natural person via {@link CustomersApi#registerCustomer}
+     * and returns a {@link SignerData} populated with the resolved party ID as
+     * {@code attorneyId}. The signer's identity fields (firstName, lastName, documentNumber)
+     * are propagated to the natural-person record so the customer row carries a
+     * document-traceable identity (SEPBLAC requirement). The full document type and
+     * number remain on the {@link SignerData} power-of-attorney record. The BE-5c
+     * contact fields (role, email, signingAuthorized, isPep) are propagated to the
+     * power of attorney.
+     */
+    private Mono<SignerData> resolveSignerAttorneyId(
+            com.firefly.experience.onboarding.core.business.commands.SubmitAuthorizedSignersCommand.SignerEntry signer,
+            UUID partyId) {
+        RegisterCustomerCommand registerCmd = new RegisterCustomerCommand()
+                .party(new RegisterPartyCommand()
+                        .partyKind(RegisterPartyCommand.PartyKindEnum.INDIVIDUAL)
+                        .sourceSystem(SOURCE_SYSTEM))
+                .naturalPerson(new RegisterNaturalPersonCommand()
+                        .givenName(signer.getFirstName())
+                        .familyName1(signer.getLastName())
+                        .taxIdNumber(signer.getDocumentNumber()));
+
+        // Per-signer deterministic key: same partyId + same signer documentNumber
+        // must resolve to the same natural-person registration on every replay.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_AUTHORIZED_SIGNERS,
+                "register-signer-natural-person", signer.getDocumentNumber());
+
+        return customersApi.registerCustomer(registerCmd, idempotencyKey)
+                .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
+                .doOnNext(attorneyId -> log.info("Registered attorney natural person: attorneyId={}", attorneyId))
+                .map(attorneyId -> new SignerData()
+                        .firstName(signer.getFirstName())
+                        .lastName(signer.getLastName())
+                        .documentType(signer.getDocumentType())
+                        .documentNumber(signer.getDocumentNumber())
+                        .attorneyId(attorneyId)
+                        .role(signer.getRole())
+                        .powerDocumentReference(signer.getPowerDocumentReference())
+                        .email(signer.getEmail())
+                        .signingAuthorized(signer.getSigningAuthorized())
+                        .isPep(signer.getIsPep()));
+    }
+
+    private String normaliseOwnershipType(String ownershipType) {
+        if (ownershipType == null || ownershipType.isBlank()) {
+            return "DIRECT";
+        }
+        return ownershipType.trim().toUpperCase();
     }
 
     // ─── Gate: Wait for KYB verification trigger ───
@@ -325,7 +474,10 @@ public class BusinessOnboardingWorkflow {
     @WaitForSignal(SIGNAL_KYB_TRIGGERED)
     public Mono<Void> triggerKybVerification(@Variable(VAR_KYB_CASE_ID) UUID caseId,
                                               @Variable(VAR_PARTY_ID) UUID partyId) {
-        return kybApi.requestVerification(caseId, partyId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_TRIGGER_KYB);
+
+        return kybApi.requestVerification(caseId, partyId, idempotencyKey)
                 .doOnNext(r -> log.info("Triggered KYB verification for caseId={}", caseId))
                 .then();
     }
@@ -335,7 +487,12 @@ public class BusinessOnboardingWorkflow {
     @WorkflowStep(id = STEP_VERIFY_KYB_APPROVED, dependsOn = STEP_TRIGGER_KYB)
     @WaitForSignal(SIGNAL_COMPLETION)
     public Mono<Void> verifyKybApproved(@Variable(VAR_KYB_CASE_ID) UUID caseId) {
-        return kybApi.getCase(caseId, UUID.randomUUID().toString())
+        // getCase is read-only but we pass a deterministic key so the
+        // downstream service can reuse cached results across retries.
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, caseId.toString(), STEP_VERIFY_KYB_APPROVED);
+
+        return kybApi.getCase(caseId, idempotencyKey)
                 .flatMap(response -> {
                     String status = response.getCaseStatus();
                     if ("VERIFIED".equalsIgnoreCase(status) || "APPROVED".equalsIgnoreCase(status)
@@ -351,7 +508,10 @@ public class BusinessOnboardingWorkflow {
 
     @WorkflowStep(id = STEP_ACTIVATE_PARTY, dependsOn = STEP_VERIFY_KYB_APPROVED)
     public Mono<Void> activateBusinessParty(@Variable(VAR_PARTY_ID) UUID partyId) {
-        return businessesApi.reactivateBusiness(partyId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_ACTIVATE_PARTY);
+
+        return businessesApi.reactivateBusiness(partyId, idempotencyKey)
                 .doOnNext(r -> log.info("Activated business party: partyId={}", partyId))
                 .then();
     }
@@ -364,7 +524,10 @@ public class BusinessOnboardingWorkflow {
                 .templateCode(TEMPLATE_BUSINESS_COMPLETED)
                 .subject("Business Onboarding Complete");
 
-        return notificationsApi.sendNotification(notifCmd, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_SEND_COMPLETION);
+
+        return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent business completion notification for partyId={}", partyId))
                 .then();
     }
@@ -373,7 +536,10 @@ public class BusinessOnboardingWorkflow {
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
         log.warn("Compensating: requesting closure for business party partyId={}", partyId);
-        return businessesApi.requestBusinessClosure(partyId, UUID.randomUUID().toString())
+        String idempotencyKey = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), "compensate-deactivate-party");
+
+        return businessesApi.requestBusinessClosure(partyId, idempotencyKey)
                 .then()
                 .onErrorResume(ex -> {
                     log.warn("Failed to compensate business party closure partyId={}: {}", partyId, ex.getMessage());
@@ -491,6 +657,24 @@ public class BusinessOnboardingWorkflow {
 
     private <T> T mapSignalPayload(Object signalData, Class<T> type) {
         return objectMapper.convertValue(signalData, type);
+    }
+
+    /**
+     * Deserialises the raw signal payload into the target command type and runs Jakarta Bean
+     * Validation on the result. Constraint violations are surfaced as a {@code 400 BAD_REQUEST}
+     * {@link BusinessException} with code {@code INVALID_SIGNAL_PAYLOAD}, ensuring malformed
+     * signal payloads are rejected at the workflow boundary before any domain SDK call is made.
+     */
+    private <T> T mapAndValidateSignalPayload(Object signalData, Class<T> type) {
+        T payload = mapSignalPayload(signalData, type);
+        Set<ConstraintViolation<T>> violations = validator.validate(payload);
+        if (!violations.isEmpty()) {
+            String message = violations.stream()
+                    .map(v -> v.getPropertyPath() + " " + v.getMessage())
+                    .collect(Collectors.joining("; "));
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD", message);
+        }
+        return payload;
     }
 
     private UUID toUuid(Object value) {
