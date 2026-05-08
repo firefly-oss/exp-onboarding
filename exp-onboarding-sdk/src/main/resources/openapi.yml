@@ -614,6 +614,14 @@ components:
           type: string
         taxIdNumber:
           type: string
+        maritalStatus:
+          pattern: ^(?i)(SINGLE|MARRIED|SEPARATED|DIVORCED|WIDOWED)$
+          type: string
+        numberOfChildren:
+          maximum: 20
+          minimum: 0
+          type: integer
+          format: int32
     SubmitIdentityDocumentsCommand:
       required:
       - documentNumber
@@ -696,6 +704,12 @@ components:
           type: number
         pep:
           type: boolean
+        email:
+          type: string
+          format: email
+        ownershipType:
+          pattern: ^(?i)(DIRECT|INDIRECT)$
+          type: string
     CorporateDocumentEntry:
       type: object
       properties:
@@ -736,6 +750,26 @@ components:
           type: string
         businessActivity:
           type: string
+        numberOfEmployees:
+          pattern: ^(1-5|6-25|26-50|51-250|250\+)$
+          type: string
+        annualRevenue:
+          type: number
+        cnaeCode:
+          maxLength: 10
+          minLength: 0
+          type: string
+        contactName:
+          type: string
+        contactPosition:
+          type: string
+        contactEmail:
+          type: string
+          format: email
+        contactPhone:
+          maxLength: 50
+          minLength: 0
+          type: string
     SignerEntry:
       type: object
       properties:
@@ -751,6 +785,13 @@ components:
           type: string
         powerDocumentReference:
           type: string
+        email:
+          type: string
+          format: email
+        signingAuthorized:
+          type: boolean
+        isPep:
+          type: boolean
     SubmitAuthorizedSignersCommand:
       type: object
       properties:

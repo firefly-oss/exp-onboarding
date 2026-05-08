@@ -43,7 +43,7 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
     @Override
     public Mono<BusinessOnboardingStatusDTO> initiateOnboarding(InitiateBusinessOnboardingCommand command) {
         String correlationId = UUID.randomUUID().toString();
-        Map<String, Object> input = Map.of("command", command);
+        Map<String, Object> input = Map.of(BusinessOnboardingWorkflow.INPUT_COMMAND, command);
 
         return workflowEngine.startWorkflow(BusinessOnboardingWorkflow.WORKFLOW_ID, input, correlationId, "api", false)
                 .flatMap(state -> queryService.executeQuery(correlationId, BusinessOnboardingWorkflow.QUERY_JOURNEY_STATUS))

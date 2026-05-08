@@ -17,6 +17,7 @@ import org.fireflyframework.orchestration.workflow.signal.SignalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
@@ -90,6 +91,15 @@ class BusinessOnboardingServiceImplTest {
                     assertThat(status.getPartyId()).isNotNull();
                 })
                 .verifyComplete();
+
+        // Asserts QA Issue 2 fix: the workflow input map keys the command under
+        // INPUT_COMMAND so the @Input(INPUT_COMMAND) resolver can extract it.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> inputCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(workflowEngine).startWorkflow(
+                eq(BusinessOnboardingWorkflow.WORKFLOW_ID), inputCaptor.capture(),
+                anyString(), eq("api"), eq(false));
+        assertThat(inputCaptor.getValue()).containsEntry(BusinessOnboardingWorkflow.INPUT_COMMAND, cmd);
     }
 
     @Test

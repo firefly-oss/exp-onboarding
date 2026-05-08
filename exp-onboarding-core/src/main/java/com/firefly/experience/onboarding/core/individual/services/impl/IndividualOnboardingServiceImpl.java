@@ -37,7 +37,7 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
     @Override
     public Mono<JourneyStatusDTO> initiateOnboarding(InitiateOnboardingCommand command) {
         String correlationId = UUID.randomUUID().toString();
-        Map<String, Object> input = Map.of("command", command);
+        Map<String, Object> input = Map.of(IndividualOnboardingWorkflow.INPUT_COMMAND, command);
 
         // SYNC mode: executes steps until the first @WaitForSignal gate, then returns.
         // At that point, register-party step has completed and partyId is available.

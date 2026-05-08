@@ -1,5 +1,6 @@
 package com.firefly.experience.onboarding.core.business.commands;
 
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,6 +17,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class SubmitCorporateDocumentsCommand {
+    @Valid
     private List<CorporateDocumentEntry> documents;
 
     @Data
