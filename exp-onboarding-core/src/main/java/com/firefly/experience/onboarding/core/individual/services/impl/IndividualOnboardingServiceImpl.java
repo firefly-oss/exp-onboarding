@@ -8,14 +8,18 @@ import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDT
 import com.firefly.experience.onboarding.core.individual.queries.KycStatusDTO;
 import com.firefly.experience.onboarding.core.individual.services.IndividualOnboardingService;
 import com.firefly.experience.onboarding.core.individual.workflows.IndividualOnboardingWorkflow;
+import org.fireflyframework.orchestration.core.model.ExecutionStatus;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
 import org.fireflyframework.orchestration.workflow.query.WorkflowQueryService;
 import org.fireflyframework.orchestration.workflow.signal.SignalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.fireflyframework.web.error.exceptions.BusinessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 
@@ -40,13 +44,62 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
         String correlationId = UUID.randomUUID().toString();
         Map<String, Object> input = Map.of(IndividualOnboardingWorkflow.INPUT_COMMAND, command);
 
-        // SYNC mode: executes steps until the first @WaitForSignal gate, then returns.
-        // At that point, register-party step has completed and partyId is available.
+        // ASYNC mode: startWorkflow returns immediately with state RUNNING while the
+        // engine executes steps in the background. The workflow contains @WaitForSignal
+        // gates, so SYNC mode would block the HTTP request indefinitely waiting for
+        // signals that the caller can only send via subsequent HTTP calls.
+        //
+        // After triggering the workflow we poll the persisted execution state until either
+        //   (a) the first synchronous step `register-party` has produced a partyId — at
+        //       which point the caller has everything it needs to drive the journey, or
+        //   (b) the workflow reaches a terminal FAILED/CANCELLED/TIMED_OUT state — which
+        //       we surface as an HTTP error instead of returning a half-empty payload.
         return workflowEngine.startWorkflow(IndividualOnboardingWorkflow.WORKFLOW_ID, input, correlationId, "api", false)
-                .flatMap(state -> queryService.executeQuery(correlationId, IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS))
-                .cast(JourneyStatusDTO.class)
+                .then(awaitInitialPhase(correlationId))
                 .doOnNext(status ->
                         log.info("Initiated onboarding journey: onboardingId={}", correlationId));
+    }
+
+    /**
+     * Poll the workflow until {@code register-party} produces a partyId (success path) or
+     * the workflow reaches a terminal failure state. Returns the {@link JourneyStatusDTO}
+     * snapshot at that moment.
+     */
+    private Mono<JourneyStatusDTO> awaitInitialPhase(String correlationId) {
+        Duration interval = Duration.ofMillis(100);
+        Duration maxWait  = Duration.ofSeconds(30);
+
+        return Mono.defer(() -> queryService.executeQuery(correlationId, IndividualOnboardingWorkflow.QUERY_JOURNEY_STATUS)
+                        .cast(JourneyStatusDTO.class))
+                .flatMap(this::failIfTerminal)
+                .repeatWhenEmpty(flux -> flux.delayElements(interval))
+                .timeout(maxWait, Mono.error(new BusinessException(HttpStatus.GATEWAY_TIMEOUT,
+                        "ONBOARDING_INITIATION_TIMEOUT",
+                        "Onboarding journey did not reach the first gate within " + maxWait.toSeconds() + "s")));
+    }
+
+    /**
+     * If the snapshot represents a terminal failure, surface it as a 502. If partyId is
+     * still null, treat the snapshot as not-yet-ready (Mono.empty) so the poll loop retries.
+     * Otherwise, emit the snapshot.
+     */
+    private Mono<JourneyStatusDTO> failIfTerminal(JourneyStatusDTO snapshot) {
+        if (snapshot == null) {
+            return Mono.empty();
+        }
+        Object phase = snapshot.getCurrentPhase();
+        if (phase != null) {
+            String name = phase.toString();
+            if ("FAILED".equals(name) || "CANCELLED".equals(name) || "TIMED_OUT".equals(name)) {
+                return Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY,
+                        "ONBOARDING_INITIATION_FAILED",
+                        "Onboarding journey could not be initiated: " + name));
+            }
+        }
+        if (snapshot.getPartyId() == null) {
+            return Mono.empty();
+        }
+        return Mono.just(snapshot);
     }
 
     @Override

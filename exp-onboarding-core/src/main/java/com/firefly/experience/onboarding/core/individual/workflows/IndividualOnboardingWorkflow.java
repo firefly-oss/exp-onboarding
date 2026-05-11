@@ -68,7 +68,11 @@ import java.util.stream.Collectors;
 @Workflow(
     id = IndividualOnboardingWorkflow.WORKFLOW_ID,
     name = "Individual Onboarding Journey",
-    triggerMode = TriggerMode.SYNC,
+    // ASYNC is required: the workflow contains @WaitForSignal gates that depend on
+    // subsequent HTTP calls from the same caller. SYNC mode would block the initiate
+    // request indefinitely because the engine would wait for signals that can only
+    // arrive after the initiate response is sent.
+    triggerMode = TriggerMode.ASYNC,
     timeoutMs = 86400000,
     publishEvents = true,
     layerConcurrency = 0
@@ -141,18 +145,24 @@ public class IndividualOnboardingWorkflow {
     @WorkflowStep(id = STEP_REGISTER_PARTY, compensatable = true,
                   compensationMethod = "compensateDeactivateParty")
     @SetVariable(VAR_PARTY_ID)
-    public Mono<UUID> registerParty(@Input(INPUT_COMMAND) InitiateOnboardingCommand cmd) {
+    public Mono<UUID> registerParty(@Input(INPUT_COMMAND) InitiateOnboardingCommand cmd,
+                                     ExecutionContext ctx) {
         RegisterCustomerCommand registerCmd = new RegisterCustomerCommand()
                 .party(new RegisterPartyCommand()
+                        .tenantId(cmd.getTenantId())
                         .partyKind(RegisterPartyCommand.PartyKindEnum.INDIVIDUAL)
                         .sourceSystem(SOURCE_SYSTEM))
                 .naturalPerson(new RegisterNaturalPersonCommand()
                         .givenName(cmd.getFirstName())
                         .familyName1(cmd.getLastName()))
-                .emails(List.of(new RegisterEmailCommand().email(cmd.getEmail())));
+                .emails(List.of(new RegisterEmailCommand()
+                        .email(cmd.getEmail())
+                        .emailKind(RegisterEmailCommand.EmailKindEnum.PERSONAL)));
 
         if (cmd.getPhone() != null && !cmd.getPhone().isBlank()) {
-            registerCmd.phones(List.of(new RegisterPhoneCommand().phoneNumber(cmd.getPhone())));
+            registerCmd.phones(List.of(new RegisterPhoneCommand()
+                    .phoneNumber(cmd.getPhone())
+                    .phoneKind(RegisterPhoneCommand.PhoneKindEnum.MOBILE)));
         }
 
         // Email is the natural identifier of an individual customer registration
@@ -163,19 +173,29 @@ public class IndividualOnboardingWorkflow {
 
         return customersApi.registerCustomer(registerCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
+                .switchIfEmpty(Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY,
+                        "REGISTER_PARTY_EMPTY_RESPONSE",
+                        "Customer registration returned no partyId — the downstream saga likely failed silently.")))
+                // The @SetVariable annotation above is honoured by the saga engine but not by
+                // the current workflow engine — write the variable explicitly so downstream
+                // @Variable parameters and the @WorkflowQuery snapshot can see partyId.
+                .doOnNext(partyId -> ctx.putVariable(VAR_PARTY_ID, partyId))
                 .doOnNext(partyId -> log.info("Registered party: partyId={}", partyId));
     }
 
     @WorkflowStep(id = STEP_OPEN_KYC_CASE, dependsOn = STEP_REGISTER_PARTY,
                   compensatable = true, compensationMethod = "compensateCancelKycCase")
     @SetVariable(VAR_KYC_CASE_ID)
-    public Mono<UUID> openKycCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
+    public Mono<UUID> openKycCase(@FromStep(STEP_REGISTER_PARTY) UUID partyId,
+                                   ExecutionContext ctx) {
         // partyId is the per-execution stable anchor (set by step 0).
         String idempotencyKey = IdempotencyKeys.of(
                 WORKFLOW_ID, partyId.toString(), STEP_OPEN_KYC_CASE);
 
         return kycApi.openCase(idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
+                // See comment on registerParty: workflow engine does not honour @SetVariable.
+                .doOnNext(caseId -> ctx.putVariable(VAR_KYC_CASE_ID, caseId))
                 .doOnNext(caseId -> log.info("Opened KYC case: caseId={}", caseId));
     }
 
@@ -207,7 +227,7 @@ public class IndividualOnboardingWorkflow {
                   dependsOn = {STEP_OPEN_KYC_CASE, STEP_SEND_WELCOME})
     @WaitForSignal(SIGNAL_PERSONAL_DATA)
     public Mono<Void> receivePersonalData(@Variable(VAR_PARTY_ID) UUID partyId,
-                                           Object signalData) {
+                                           @Variable("signal." + SIGNAL_PERSONAL_DATA) Object signalData) {
         return Mono.defer(() -> {
             SubmitPersonalDataCommand cmd = mapAndValidateSignalPayload(signalData, SubmitPersonalDataCommand.class);
             RegisterAddressCommand addressCmd = new RegisterAddressCommand()
@@ -266,7 +286,7 @@ public class IndividualOnboardingWorkflow {
     @WorkflowStep(id = STEP_RECEIVE_ECONOMIC_DATA, dependsOn = STEP_RECEIVE_PERSONAL_DATA)
     @WaitForSignal(SIGNAL_ECONOMIC_DATA)
     public Mono<Void> receiveEconomicData(@Variable(VAR_PARTY_ID) UUID partyId,
-                                           Object signalData) {
+                                           @Variable("signal." + SIGNAL_ECONOMIC_DATA) Object signalData) {
         return Mono.defer(() -> {
             SubmitEconomicDataCommand cmd = mapAndValidateSignalPayload(signalData,
                     SubmitEconomicDataCommand.class);
@@ -360,7 +380,7 @@ public class IndividualOnboardingWorkflow {
     @WaitForSignal(SIGNAL_IDENTITY_DOCS)
     public Mono<UUID> receiveIdentityDocuments(@Variable(VAR_KYC_CASE_ID) UUID caseId,
                                                 @Variable(VAR_PARTY_ID) UUID partyId,
-                                                Object signalData) {
+                                                @Variable("signal." + SIGNAL_IDENTITY_DOCS) Object signalData) {
         SubmitIdentityDocumentsCommand cmd = mapAndValidateSignalPayload(signalData,
                 SubmitIdentityDocumentsCommand.class);
         AttachEvidenceCommand attachCmd = new AttachEvidenceCommand()
@@ -434,6 +454,10 @@ public class IndividualOnboardingWorkflow {
     // ─── Compensation methods ───
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
+        if (partyId == null) {
+            log.warn("Skipping compensateDeactivateParty: no partyId — register-party never produced one.");
+            return Mono.empty();
+        }
         log.warn("Compensating: requesting closure for party partyId={}", partyId);
         String idempotencyKey = IdempotencyKeys.of(
                 WORKFLOW_ID, partyId.toString(), "compensate-deactivate-party");
@@ -447,6 +471,10 @@ public class IndividualOnboardingWorkflow {
     }
 
     public Mono<Void> compensateCancelKycCase(@FromStep(STEP_OPEN_KYC_CASE) UUID caseId) {
+        if (caseId == null) {
+            log.warn("Skipping compensateCancelKycCase: no caseId — open-kyc-case never produced one.");
+            return Mono.empty();
+        }
         log.warn("Compensating: cancelling KYC case caseId={}", caseId);
         String idempotencyKey = IdempotencyKeys.of(
                 WORKFLOW_ID, caseId.toString(), "compensate-cancel-kyc-case");

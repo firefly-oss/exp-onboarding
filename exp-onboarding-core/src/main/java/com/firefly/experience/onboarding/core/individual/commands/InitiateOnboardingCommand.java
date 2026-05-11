@@ -6,6 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.util.UUID;
 
 /**
  * Command DTO for initiating an individual onboarding journey.
@@ -16,6 +19,8 @@ import jakarta.validation.constraints.NotBlank;
 @AllArgsConstructor
 @NoArgsConstructor
 public class InitiateOnboardingCommand {
+    @NotNull(message = "Tenant ID is required")
+    private UUID tenantId;
     @NotBlank(message = "First name is required")
     private String firstName;
     @NotBlank(message = "Last name is required")

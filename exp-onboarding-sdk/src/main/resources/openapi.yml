@@ -820,8 +820,12 @@ components:
       - email
       - firstName
       - lastName
+      - tenantId
       type: object
       properties:
+        tenantId:
+          type: string
+          format: uuid
         firstName:
           minLength: 1
           type: string
