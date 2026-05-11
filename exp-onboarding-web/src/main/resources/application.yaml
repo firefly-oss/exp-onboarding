@@ -48,6 +48,13 @@ api-configuration:
     common-notifications:
       base-path: ${ENDPOINT_DOMAIN_COMMON_NOTIFICATIONS:http://localhost:8082}
       timeout: 5s
+    business-intelligence:
+      base-path: ${ENDPOINT_DOMAIN_DATA_BUSINESS_INTELLIGENCE:http://localhost:8085}
+      timeout: 10s
+      orbis:
+        tenant-id: ${ENRICHER_ORBIS_TENANT_ID:efdd318a-d07a-45a6-bfbf-a9922f696c6f}
+        enrichment-type: ${ENRICHER_ORBIS_TYPE:company-details}
+        domain: ${ENRICHER_ORBIS_DOMAIN:Orbis}
 
 springdoc:
   packages-to-scan: com.firefly.experience.onboarding.web.controllers

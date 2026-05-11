@@ -12,6 +12,9 @@ tags:
   description: Atomic endpoints for the business onboarding journey (Persona Jurídica).
     Each POST/PATCH endpoint either starts the workflow or advances it via a signal
     gate.
+- name: Business Search
+  description: Search and look up legal entities against the business intelligence
+    provider (Orbis).
 paths:
   /api/v1/onboarding/individuals/{onboardingId}/personal-data:
     post:
@@ -400,6 +403,47 @@ paths:
           description: Onboarding journey not found
         "409":
           description: Journey is not at the authorized-signers gate
+  /api/v1/onboarding/businesses/search:
+    post:
+      tags:
+      - Business Search
+      summary: Search businesses
+      description: Returns the candidate list from the provider that match the supplied
+        criteria. Either nationalId (CIF/VAT) or name must be supplied.
+      operationId: search
+      parameters:
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BusinessSearchRequest"
+        required: true
+      responses:
+        "200":
+          description: Provider match list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
+        "502":
+          description: Upstream provider error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
   /api/v1/onboarding/businesses:
     post:
       tags:
@@ -591,6 +635,48 @@ paths:
                 $ref: "#/components/schemas/KybStatusResponse"
         "404":
           description: Onboarding journey not found
+  /api/v1/onboarding/businesses/search/{bvdId}:
+    get:
+      tags:
+      - Business Search
+      summary: Get company data by BvD id
+      description: Returns the companyData section of the composite enrichment response
+        for the given BvD identifier (selected from a previous /search call).
+      operationId: getCompanyData
+      parameters:
+      - name: bvdId
+        in: path
+        description: BvD identifier returned by /search
+        required: true
+        schema:
+          type: string
+        example: ES12345
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Company data subtree from provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
+        "400":
+          description: bvdId missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
+        "502":
+          description: Upstream provider error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonNode"
 components:
   schemas:
     SubmitPersonalDataCommand:
@@ -799,6 +885,37 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SignerEntry"
+    BusinessSearchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Company name or trade name
+          example: ACME Iberica SA
+        city:
+          type: string
+          description: City of incorporation or operation
+          example: Madrid
+        country:
+          type: string
+          description: ISO country name or code
+          example: Spain
+        address:
+          type: string
+          description: Postal address
+          example: Calle Mayor 1
+        nationalId:
+          type: string
+          description: National business identifier (CIF/VAT/etc.)
+          example: B12345678
+        postCode:
+          type: string
+          description: Postal code
+          example: "28013"
+      description: Criteria for business search against the third-party business intelligence
+        provider
+    JsonNode:
+      type: object
     InitiateBusinessOnboardingCommand:
       required:
       - businessName
