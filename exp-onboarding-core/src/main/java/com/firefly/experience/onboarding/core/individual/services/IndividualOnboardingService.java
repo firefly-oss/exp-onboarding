@@ -1,6 +1,7 @@
 package com.firefly.experience.onboarding.core.individual.services;
 
 import com.firefly.experience.onboarding.core.individual.commands.InitiateOnboardingCommand;
+import com.firefly.experience.onboarding.core.individual.commands.SubmitEconomicDataCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitIdentityDocumentsCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDTO;
@@ -19,6 +20,9 @@ public interface IndividualOnboardingService {
 
     /** Send personal data signal to advance the journey. */
     Mono<Void> submitPersonalData(UUID onboardingId, SubmitPersonalDataCommand command);
+
+    /** Send economic data signal to advance the journey past the economic-data gate. */
+    Mono<Void> submitEconomicData(UUID onboardingId, SubmitEconomicDataCommand command);
 
     /** Send identity documents signal to advance the journey. */
     Mono<Void> submitIdentityDocuments(UUID onboardingId, SubmitIdentityDocumentsCommand command);

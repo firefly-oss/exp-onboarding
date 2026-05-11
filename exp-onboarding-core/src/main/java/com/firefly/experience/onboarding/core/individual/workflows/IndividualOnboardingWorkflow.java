@@ -13,6 +13,7 @@ import com.firefly.domain.people.sdk.model.RegisterPartyCommand;
 import com.firefly.domain.people.sdk.model.RegisterPhoneCommand;
 import com.firefly.domain.people.sdk.model.UpdateCustomerCommand;
 import com.firefly.experience.onboarding.core.individual.commands.InitiateOnboardingCommand;
+import com.firefly.experience.onboarding.core.individual.commands.SubmitEconomicDataCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitIdentityDocumentsCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDTO;
@@ -83,6 +84,7 @@ public class IndividualOnboardingWorkflow {
     public static final String STEP_OPEN_KYC_CASE = "open-kyc-case";
     public static final String STEP_SEND_WELCOME = "send-welcome";
     public static final String STEP_RECEIVE_PERSONAL_DATA = "receive-personal-data";
+    public static final String STEP_RECEIVE_ECONOMIC_DATA = "receive-economic-data";
     public static final String STEP_RECEIVE_IDENTITY_DOCS = "receive-identity-docs";
     public static final String STEP_TRIGGER_KYC_VERIFICATION = "trigger-kyc-verification";
     public static final String STEP_VERIFY_KYC_APPROVED = "verify-kyc-approved";
@@ -91,6 +93,7 @@ public class IndividualOnboardingWorkflow {
 
     // ─── Signal names ───
     public static final String SIGNAL_PERSONAL_DATA = "personal-data-submitted";
+    public static final String SIGNAL_ECONOMIC_DATA = "economic-data-submitted";
     public static final String SIGNAL_IDENTITY_DOCS = "identity-docs-submitted";
     public static final String SIGNAL_KYC_TRIGGERED = "kyc-triggered";
     public static final String SIGNAL_COMPLETION = "completion-requested";
@@ -101,6 +104,7 @@ public class IndividualOnboardingWorkflow {
 
     // ─── Journey phases ───
     public static final String PHASE_AWAITING_PERSONAL_DATA = "AWAITING_PERSONAL_DATA";
+    public static final String PHASE_AWAITING_ECONOMIC_DATA = "AWAITING_ECONOMIC_DATA";
     public static final String PHASE_AWAITING_IDENTITY_DOCS = "AWAITING_IDENTITY_DOCUMENTS";
     public static final String PHASE_AWAITING_KYC_TRIGGER = "AWAITING_KYC_TRIGGER";
     public static final String PHASE_AWAITING_COMPLETION = "AWAITING_COMPLETION";
@@ -257,9 +261,102 @@ public class IndividualOnboardingWorkflow {
         }
     }
 
+    // ─── Gate: Wait for economic data ───
+
+    @WorkflowStep(id = STEP_RECEIVE_ECONOMIC_DATA, dependsOn = STEP_RECEIVE_PERSONAL_DATA)
+    @WaitForSignal(SIGNAL_ECONOMIC_DATA)
+    public Mono<Void> receiveEconomicData(@Variable(VAR_PARTY_ID) UUID partyId,
+                                           Object signalData) {
+        return Mono.defer(() -> {
+            SubmitEconomicDataCommand cmd = mapAndValidateSignalPayload(signalData,
+                    SubmitEconomicDataCommand.class);
+            validateEconomicDataCrossFieldRules(cmd);
+
+            // Front-side `position` and `monthlySalary` map onto the pre-existing
+            // natural_person columns `occupation` / `monthly_income` (V11 reuse).
+            // The remaining 10 fields go straight to the new V11 columns.
+            UpdateCustomerCommand updateCmd = new UpdateCustomerCommand()
+                    .partyId(partyId)
+                    .occupation(cmd.getPosition())
+                    .monthlyIncome(cmd.getMonthlySalary())
+                    .employmentStatus(cmd.getEmploymentStatus())
+                    .employmentType(cmd.getEmploymentType())
+                    .employer(cmd.getEmployer())
+                    .employmentStartDate(cmd.getEmploymentStartDate())
+                    .annualPaydays(cmd.getAnnualPaydays())
+                    .housingType(cmd.getHousingType())
+                    .housingCost(cmd.getHousingCost())
+                    .housingStartDate(cmd.getHousingStartDate())
+                    .existingLoans(cmd.getExistingLoans())
+                    .otherDebts(cmd.getOtherDebts());
+
+            String idempotencyKey = IdempotencyKeys.of(
+                    WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_ECONOMIC_DATA);
+
+            return customersApi.updateCustomer(updateCmd, idempotencyKey)
+                    .doOnNext(r -> log.info("Submitted economic data for partyId={}", partyId))
+                    .then();
+        });
+    }
+
+    /**
+     * Enforces the conditional requirements documented in the front-end spec.
+     * Structural constraints (enums, sizes) are already covered by Bean Validation
+     * via the command DTO; here we only check field-to-field dependencies.
+     */
+    private void validateEconomicDataCrossFieldRules(SubmitEconomicDataCommand cmd) {
+        String status = cmd.getEmploymentStatus();
+        boolean isEmployed = "private".equals(status) || "public".equals(status) || "civil".equals(status);
+        boolean isSelfEmployed = "selfEmployed".equals(status) || "entrepreneur".equals(status);
+        boolean isRetired = "retired".equals(status);
+        boolean isUnemployed = "unemployed".equals(status);
+
+        if (isEmployed) {
+            requireField(cmd.getEmploymentType(), "employmentType",
+                    "employmentType is required when employmentStatus is " + status);
+            requireField(cmd.getEmployer(), "employer",
+                    "employer is required when employmentStatus is " + status);
+            requireField(cmd.getPosition(), "position",
+                    "position is required when employmentStatus is " + status);
+        }
+        if (isEmployed || isSelfEmployed) {
+            if (cmd.getEmploymentStartDate() == null) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD",
+                        "employmentStartDate is required when employmentStatus is " + status);
+            }
+            if ("entrepreneur".equals(status) && (cmd.getEmployer() == null || cmd.getEmployer().isBlank())) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD",
+                        "employer is required when employmentStatus is entrepreneur");
+            }
+        }
+        if (isEmployed || isSelfEmployed || isRetired) {
+            if (cmd.getAnnualPaydays() == null) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD",
+                        "annualPaydays is required when employmentStatus is " + status);
+            }
+        }
+        if (!isUnemployed && cmd.getMonthlySalary() == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD",
+                    "monthlySalary is required when employmentStatus is " + status);
+        }
+
+        String housingType = cmd.getHousingType();
+        if (("owned".equals(housingType) || "family".equals(housingType))
+                && cmd.getHousingStartDate() == null) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD",
+                    "housingStartDate is required when housingType is " + housingType);
+        }
+    }
+
+    private void requireField(String value, String fieldName, String message) {
+        if (value == null || value.isBlank()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD", message);
+        }
+    }
+
     // ─── Gate: Wait for identity documents ───
 
-    @WorkflowStep(id = STEP_RECEIVE_IDENTITY_DOCS, dependsOn = STEP_RECEIVE_PERSONAL_DATA)
+    @WorkflowStep(id = STEP_RECEIVE_IDENTITY_DOCS, dependsOn = STEP_RECEIVE_ECONOMIC_DATA)
     @WaitForSignal(SIGNAL_IDENTITY_DOCS)
     public Mono<UUID> receiveIdentityDocuments(@Variable(VAR_KYC_CASE_ID) UUID caseId,
                                                 @Variable(VAR_PARTY_ID) UUID partyId,
@@ -400,6 +497,9 @@ public class IndividualOnboardingWorkflow {
         if (steps.getOrDefault(STEP_RECEIVE_PERSONAL_DATA, StepStatus.PENDING) == StepStatus.PENDING) {
             return PHASE_AWAITING_PERSONAL_DATA;
         }
+        if (steps.getOrDefault(STEP_RECEIVE_ECONOMIC_DATA, StepStatus.PENDING) == StepStatus.PENDING) {
+            return PHASE_AWAITING_ECONOMIC_DATA;
+        }
         if (steps.getOrDefault(STEP_RECEIVE_IDENTITY_DOCS, StepStatus.PENDING) == StepStatus.PENDING) {
             return PHASE_AWAITING_IDENTITY_DOCS;
         }
@@ -434,6 +534,9 @@ public class IndividualOnboardingWorkflow {
     private String deriveNextStep(Map<String, StepStatus> steps) {
         if (steps.getOrDefault(STEP_RECEIVE_PERSONAL_DATA, StepStatus.PENDING) == StepStatus.PENDING) {
             return STEP_RECEIVE_PERSONAL_DATA;
+        }
+        if (steps.getOrDefault(STEP_RECEIVE_ECONOMIC_DATA, StepStatus.PENDING) == StepStatus.PENDING) {
+            return STEP_RECEIVE_ECONOMIC_DATA;
         }
         if (steps.getOrDefault(STEP_RECEIVE_IDENTITY_DOCS, StepStatus.PENDING) == StepStatus.PENDING) {
             return STEP_RECEIVE_IDENTITY_DOCS;

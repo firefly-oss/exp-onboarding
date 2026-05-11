@@ -1,6 +1,7 @@
 package com.firefly.experience.onboarding.core.individual.services.impl;
 
 import com.firefly.experience.onboarding.core.individual.commands.InitiateOnboardingCommand;
+import com.firefly.experience.onboarding.core.individual.commands.SubmitEconomicDataCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitIdentityDocumentsCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDTO;
@@ -52,6 +53,14 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
     public Mono<Void> submitPersonalData(UUID onboardingId, SubmitPersonalDataCommand command) {
         return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_PERSONAL_DATA, command)
                 .doOnNext(r -> log.info("Signal delivered: personal-data-submitted for onboardingId={}",
+                        onboardingId))
+                .then();
+    }
+
+    @Override
+    public Mono<Void> submitEconomicData(UUID onboardingId, SubmitEconomicDataCommand command) {
+        return signalService.signal(onboardingId.toString(), IndividualOnboardingWorkflow.SIGNAL_ECONOMIC_DATA, command)
+                .doOnNext(r -> log.info("Signal delivered: economic-data-submitted for onboardingId={}",
                         onboardingId))
                 .then();
     }

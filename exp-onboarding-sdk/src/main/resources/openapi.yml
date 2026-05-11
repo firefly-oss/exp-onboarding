@@ -121,6 +121,43 @@ paths:
                 type: object
                 additionalProperties:
                   type: object
+  /api/v1/onboarding/individuals/{onboardingId}/economic-data:
+    post:
+      tags:
+      - Individual Onboarding
+      summary: Submit Economic Data
+      description: "Submit employment, housing and debt data for the onboarding individual.\
+        \ Advances the journey past the economic-data gate."
+      operationId: submitEconomicData
+      parameters:
+      - name: onboardingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Idempotency-Key
+        in: header
+        description: "Unique key for idempotent requests. If provided, ensures that\
+          \ identical requests with the same key will only be processed once."
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitEconomicDataCommand"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
   /api/v1/onboarding/individuals/{onboardingId}/completion:
     post:
       tags:
@@ -724,6 +761,60 @@ components:
           type: string
         mimeType:
           type: string
+    SubmitEconomicDataCommand:
+      required:
+      - employmentStatus
+      - housingCost
+      - housingType
+      type: object
+      properties:
+        employmentStatus:
+          minLength: 1
+          pattern: ^(private|public|civil|selfEmployed|entrepreneur|unemployedBenefit|unemployed|retired|other)$
+          type: string
+        employmentType:
+          pattern: ^(permanent|temporary|project|internship|na)$
+          type: string
+        employer:
+          maxLength: 200
+          minLength: 0
+          type: string
+        position:
+          maxLength: 200
+          minLength: 0
+          type: string
+        employmentStartDate:
+          type: string
+          format: date
+        annualPaydays:
+          maximum: 14
+          minimum: 12
+          type: integer
+          format: int32
+        monthlySalary:
+          minimum: 0.0
+          exclusiveMinimum: false
+          type: number
+        housingType:
+          minLength: 1
+          pattern: ^(rent|mortgage|owned|family)$
+          type: string
+        housingCost:
+          minimum: 0.0
+          exclusiveMinimum: false
+          type: number
+        housingStartDate:
+          type: string
+          format: date
+        existingLoans:
+          maximum: 3
+          minimum: 0
+          type: integer
+          format: int32
+        otherDebts:
+          minimum: 0.0
+          exclusiveMinimum: false
+          type: number
     InitiateOnboardingCommand:
       required:
       - email

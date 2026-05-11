@@ -1,6 +1,7 @@
 package com.firefly.experience.onboarding.web.controllers;
 
 import com.firefly.experience.onboarding.core.individual.commands.InitiateOnboardingCommand;
+import com.firefly.experience.onboarding.core.individual.commands.SubmitEconomicDataCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitIdentityDocumentsCommand;
 import com.firefly.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import com.firefly.experience.onboarding.core.individual.queries.JourneyStatusDTO;
@@ -34,6 +35,7 @@ public class IndividualOnboardingController {
     private static final String KEY_STATUS = "status";
 
     private static final String STATUS_PERSONAL_DATA_SUBMITTED = "PERSONAL_DATA_SUBMITTED";
+    private static final String STATUS_ECONOMIC_DATA_SUBMITTED = "ECONOMIC_DATA_SUBMITTED";
     private static final String STATUS_DOCUMENTS_SUBMITTED = "DOCUMENTS_SUBMITTED";
     private static final String STATUS_KYC_TRIGGERED = "KYC_TRIGGERED";
     private static final String STATUS_COMPLETED = "COMPLETED";
@@ -74,6 +76,21 @@ public class IndividualOnboardingController {
                 .thenReturn(ResponseEntity.ok(Map.of(
                         KEY_ONBOARDING_ID, (Object) onboardingId,
                         KEY_STATUS, STATUS_PERSONAL_DATA_SUBMITTED)));
+    }
+
+    @PostMapping(value = "/{onboardingId}/economic-data",
+                 consumes = MediaType.APPLICATION_JSON_VALUE,
+                 produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Submit Economic Data",
+               description = "Submit employment, housing and debt data for the onboarding individual. "
+                   + "Advances the journey past the economic-data gate.")
+    public Mono<ResponseEntity<Map<String, Object>>> submitEconomicData(
+            @PathVariable UUID onboardingId,
+            @Valid @RequestBody SubmitEconomicDataCommand command) {
+        return onboardingService.submitEconomicData(onboardingId, command)
+                .thenReturn(ResponseEntity.ok(Map.of(
+                        KEY_ONBOARDING_ID, (Object) onboardingId,
+                        KEY_STATUS, STATUS_ECONOMIC_DATA_SUBMITTED)));
     }
 
     @PostMapping(value = "/{onboardingId}/identity-documents",
