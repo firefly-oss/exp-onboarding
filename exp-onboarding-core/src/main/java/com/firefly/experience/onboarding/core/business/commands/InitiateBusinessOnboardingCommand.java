@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.UUID;
+
 /**
  * Command DTO for initiating a business onboarding journey.
  * Used as the initial input payload when starting the workflow.
@@ -23,5 +25,5 @@ public class InitiateBusinessOnboardingCommand {
     private String countryOfIncorporation;
     private String contactEmail;
     private String contactPhone;
-    private String tenantId;
+    private UUID tenantId;
 }

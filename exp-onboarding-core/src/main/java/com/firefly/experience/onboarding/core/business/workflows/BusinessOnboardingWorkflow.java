@@ -115,6 +115,7 @@ public class BusinessOnboardingWorkflow {
     public static final String VAR_KYB_CASE_ID = "kybCaseId";
     public static final String VAR_BUSINESS_NAME = "businessName";
     public static final String VAR_REGISTRATION_NUMBER = "registrationNumber";
+    public static final String VAR_TENANT_ID = "tenantId";
 
     // ─── Journey phases ───
     public static final String PHASE_INITIATED = "INITIATED";
@@ -155,9 +156,13 @@ public class BusinessOnboardingWorkflow {
                                              ExecutionContext ctx) {
         ctx.putVariable(VAR_BUSINESS_NAME, cmd.getBusinessName());
         ctx.putVariable(VAR_REGISTRATION_NUMBER, cmd.getRegistrationNumber());
+        if (cmd.getTenantId() != null) {
+            ctx.putVariable(VAR_TENANT_ID, cmd.getTenantId());
+        }
 
         RegisterBusinessCommand registerCmd = new RegisterBusinessCommand()
                 .party(new RegisterPartyCommand()
+                        .tenantId(cmd.getTenantId())
                         .partyKind(RegisterPartyCommand.PartyKindEnum.ORGANIZATION)
                         .sourceSystem(SOURCE_SYSTEM))
                 .legalEntity(new RegisterLegalEntityCommand()
@@ -172,6 +177,9 @@ public class BusinessOnboardingWorkflow {
 
         return businessesApi.registerBusiness(registerCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
+                .switchIfEmpty(Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY,
+                        "REGISTER_PARTY_EMPTY_RESPONSE",
+                        "Business registration returned no partyId — the downstream saga likely failed silently.")))
                 .doOnNext(partyId -> ctx.putVariable(VAR_PARTY_ID, partyId))
                 .doOnNext(partyId -> log.info("Registered business party: partyId={}", partyId));
     }
@@ -183,8 +191,10 @@ public class BusinessOnboardingWorkflow {
                                    ExecutionContext ctx) {
         String businessName = ctx.getVariableAs(VAR_BUSINESS_NAME, String.class);
         String registrationNumber = ctx.getVariableAs(VAR_REGISTRATION_NUMBER, String.class);
+        UUID tenantId = ctx.getVariableAs(VAR_TENANT_ID, UUID.class);
 
         CreateKybCaseRequest request = new CreateKybCaseRequest()
+                .tenantId(tenantId)
                 .partyId(partyId)
                 .businessName(businessName)
                 .registrationNumber(registrationNumber);
@@ -537,6 +547,10 @@ public class BusinessOnboardingWorkflow {
     // ─── Compensation methods ───
 
     public Mono<Void> compensateDeactivateParty(@FromStep(STEP_REGISTER_PARTY) UUID partyId) {
+        if (partyId == null) {
+            log.warn("Compensating: skipping party closure — register-business-party did not produce a partyId");
+            return Mono.empty();
+        }
         log.warn("Compensating: requesting closure for business party partyId={}", partyId);
         String idempotencyKey = IdempotencyKeys.of(
                 WORKFLOW_ID, partyId.toString(), "compensate-deactivate-party");

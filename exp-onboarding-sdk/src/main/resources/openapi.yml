@@ -1033,6 +1033,7 @@ components:
           type: string
         tenantId:
           type: string
+          format: uuid
     BusinessOnboardingResponse:
       type: object
       properties:
