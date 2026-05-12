@@ -10,22 +10,36 @@ spring:
   threads:
     virtual:
       enabled: true
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+  # ---- DEMO ONLY: Redis disabled. Restore the block below when Redis is reachable. ----
+  # data:
+  #   redis:
+  #     host: ${REDIS_HOST:localhost}
+  #     port: ${REDIS_PORT:6379}
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
 
 firefly:
   orchestration:
+    # ---- DEMO ONLY: workflow state kept in-memory. Restore the Redis settings below for clustered deployments. ----
     persistence:
-      provider: redis
-      key-prefix: "exp-onboarding:"
-      key-ttl: 72h
-      retention-period: 30d
-      cleanup-interval: 6h
+      provider: in-memory
+      # provider: redis
+      # key-prefix: "exp-onboarding:"
+      # key-ttl: 72h
+      # retention-period: 30d
+      # cleanup-interval: 6h
     recovery:
-      enabled: true
-      stale-threshold: 1h
+      enabled: false
+      # enabled: true
+      # stale-threshold: 1h
+  # ---- DEMO ONLY: idempotency cache forced to Caffeine so the AUTO resolver does NOT pick Redis. ----
+  cache:
+    enabled: true
+    default-cache-type: CAFFEINE
+    redis:
+      enabled: false
   cqrs:
     enabled: true
     command:
