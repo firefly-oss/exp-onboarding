@@ -172,6 +172,7 @@ public class BusinessOnboardingWorkflow {
 
         return businessesApi.registerBusiness(registerCmd, idempotencyKey)
                 .flatMap(response -> extractUuid(response, FIELD_PARTY_ID))
+                .doOnNext(partyId -> ctx.putVariable(VAR_PARTY_ID, partyId))
                 .doOnNext(partyId -> log.info("Registered business party: partyId={}", partyId));
     }
 
@@ -193,6 +194,7 @@ public class BusinessOnboardingWorkflow {
 
         return kybApi.createCase(request, idempotencyKey)
                 .map(response -> response.getCaseId())
+                .doOnNext(caseId -> ctx.putVariable(VAR_KYB_CASE_ID, caseId))
                 .doOnNext(caseId -> log.info("Opened KYB case: caseId={}", caseId));
     }
 
