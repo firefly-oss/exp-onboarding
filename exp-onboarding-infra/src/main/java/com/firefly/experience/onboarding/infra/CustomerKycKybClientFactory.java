@@ -5,6 +5,7 @@ import com.firefly.domain.kyc.kyb.sdk.api.KycApi;
 import com.firefly.domain.kyc.kyb.sdk.invoker.ApiClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
 
 /**
  * Factory that creates and configures the Customer KYC/KYB SDK {@link ApiClient}
@@ -12,6 +13,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CustomerKycKybClientFactory {
+
+    private static final int MAX_IN_MEMORY_SIZE = 20 * 1024 * 1024;
 
     private final ApiClient apiClient;
 
@@ -21,7 +24,10 @@ public class CustomerKycKybClientFactory {
      * @param properties connection properties for the Customer KYC/KYB service
      */
     public CustomerKycKybClientFactory(CustomerKycKybProperties properties) {
-        this.apiClient = new ApiClient();
+        WebClient webClient = ApiClient.buildWebClientBuilder()
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(MAX_IN_MEMORY_SIZE))
+                .build();
+        this.apiClient = new ApiClient(webClient);
         this.apiClient.setBasePath(properties.getBasePath());
     }
 
