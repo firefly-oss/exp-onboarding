@@ -4,7 +4,7 @@ spring:
     version: 1.0.0
     team:
       name: Firefly Software Foundation
-      email: dev@getfirefly.io
+      email: dev@fireflysoftware.io
   codec:
     max-in-memory-size: 20MB
   threads:
