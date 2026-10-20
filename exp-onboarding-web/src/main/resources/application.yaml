@@ -73,7 +73,7 @@ api-configuration:
         domain: ${ENRICHER_ORBIS_DOMAIN:Orbis}
 
 springdoc:
-  packages-to-scan: com.firefly.experience.onboarding.web.controllers
+  packages-to-scan: io.fireflysoftware.experience.onboarding.web.controllers
   paths-to-match: /api/**
 
 server:
@@ -94,7 +94,7 @@ management:
 logging:
   level:
     root: INFO
-    com.firefly.experience.onboarding: DEBUG
+    io.fireflysoftware.experience.onboarding: DEBUG
     org.fireflyframework: DEBUG
 
 ---
@@ -104,7 +104,7 @@ spring:
       on-profile: dev
 logging:
   level:
-    com.firefly: DEBUG
+    io.fireflysoftware: DEBUG
 
 ---
 spring:
@@ -113,7 +113,7 @@ spring:
       on-profile: pro
 logging:
   level:
-    com.firefly: INFO
+    io.fireflysoftware: INFO
 springdoc:
   api-docs:
     enabled: false

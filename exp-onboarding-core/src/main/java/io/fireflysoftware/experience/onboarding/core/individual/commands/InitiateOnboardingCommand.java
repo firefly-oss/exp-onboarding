@@ -1,0 +1,34 @@
+package io.fireflysoftware.experience.onboarding.core.individual.commands;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.util.UUID;
+
+/**
+ * Command DTO for initiating an individual onboarding journey.
+ * Used as the initial input payload when starting the workflow.
+ */
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class InitiateOnboardingCommand {
+    @NotNull(message = "Tenant ID is required")
+    private UUID tenantId;
+    @NotBlank(message = "First name is required")
+    private String firstName;
+    @NotBlank(message = "Last name is required")
+    private String lastName;
+    @NotBlank(message = "Email is required")
+    private String email;
+    private String phone;
+    private String nationalIdNumber;
+    @Builder.Default
+    private String dueDiligenceLevel = "STANDARD";
+}
