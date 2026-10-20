@@ -12,6 +12,7 @@
     </parent>
 
     <artifactId>exp-onboarding</artifactId>
+    <name>exp-onboarding</name>
     <version>26.10.3</version>
     <packaging>pom</packaging>
     <modules>

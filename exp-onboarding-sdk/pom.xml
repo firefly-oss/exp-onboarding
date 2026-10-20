@@ -10,6 +10,7 @@
     </parent>
 
     <artifactId>exp-onboarding-sdk</artifactId>
+    <name>exp-onboarding-sdk</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
