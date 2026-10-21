@@ -40,6 +40,7 @@ import io.fireflysoftware.domain.people.sdk.model.RegisterPartyCommand;
 import io.fireflysoftware.domain.people.sdk.model.UpdateBusinessCommand;
 import io.fireflysoftware.experience.onboarding.core.business.commands.InitiateBusinessOnboardingCommand;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitAuthorizedSignersCommand;
+import io.fireflysoftware.experience.onboarding.core.business.commands.IndustryClassificationScheme;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitCompanyDataCommand;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitCorporateDocumentsCommand;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitUbosCommand;
@@ -263,11 +264,11 @@ public class BusinessOnboardingWorkflow {
                                           Object signalData) {
         SubmitCompanyDataCommand cmd = mapAndValidateSignalPayload(signalData, SubmitCompanyDataCommand.class);
         String classificationCode = cmd.getIndustryClassificationCode();
-        String classificationScheme = cmd.getIndustryClassificationScheme();
+        IndustryClassificationScheme classificationScheme = cmd.getIndustryClassificationScheme();
         if ((classificationCode == null || classificationCode.isBlank()) && cmd.getCnaeCode() != null) {
             classificationCode = cmd.getCnaeCode();
-            if (classificationScheme == null || classificationScheme.isBlank()) {
-                classificationScheme = "CNAE";
+            if (classificationScheme == null) {
+                classificationScheme = IndustryClassificationScheme.CNAE;
             }
         }
 
@@ -313,13 +314,13 @@ public class BusinessOnboardingWorkflow {
                 .doOnSuccess(v -> log.info("Submitted company data for partyId={}", partyId));
     }
 
-    private Mono<Void> storeIndustryClassification(UUID partyId, String scheme, String code) {
+    private Mono<Void> storeIndustryClassification(UUID partyId, IndustryClassificationScheme scheme, String code) {
         if (code == null || code.isBlank()) {
             return Mono.empty();
         }
-        String resolvedScheme = scheme == null || scheme.isBlank() ? "CNAE" : scheme.trim().toUpperCase();
+        IndustryClassificationScheme resolvedScheme = scheme == null ? IndustryClassificationScheme.CNAE : scheme;
         IndustryClassificationRequest request = new IndustryClassificationRequest()
-                .classificationScheme(IndustryClassificationRequest.ClassificationSchemeEnum.fromValue(resolvedScheme))
+                .classificationScheme(IndustryClassificationRequest.ClassificationSchemeEnum.fromValue(resolvedScheme.name()))
                 .classificationCode(code)
                 .isPrimary(true);
         String key = IdempotencyKeys.of(

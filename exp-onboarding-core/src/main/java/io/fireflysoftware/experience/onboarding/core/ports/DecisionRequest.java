@@ -26,10 +26,10 @@ import java.util.UUID;
  *
  * @param partyId     party the decision is about. May be null before the party exists.
  * @param productId   optional product
- * @param journeyStep journey step name, such as {@code lending-application}
+ * @param journeyStep journey step being decided
  * @param attributes  facts already collected, including a credit report summary when one was requested
  */
-public record DecisionRequest(UUID partyId, UUID productId, String journeyStep, Map<String, String> attributes) {
+public record DecisionRequest(UUID partyId, UUID productId, JourneyStep journeyStep, Map<String, String> attributes) {
 
     public DecisionRequest {
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);

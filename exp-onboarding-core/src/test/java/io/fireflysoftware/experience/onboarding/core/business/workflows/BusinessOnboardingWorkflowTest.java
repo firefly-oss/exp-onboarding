@@ -32,6 +32,7 @@ import io.fireflysoftware.domain.people.sdk.model.UpdateBusinessCommand;
 
 import java.util.Map;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitAuthorizedSignersCommand;
+import io.fireflysoftware.experience.onboarding.core.business.commands.IndustryClassificationScheme;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitCompanyDataCommand;
 import io.fireflysoftware.experience.onboarding.core.business.commands.SubmitUbosCommand;
 import jakarta.validation.Validation;
@@ -100,7 +101,7 @@ class BusinessOnboardingWorkflowTest {
                 .postalCode("28013")
                 .numberOfEmployees("51-250")
                 .annualRevenue(new BigDecimal("1500000.00"))
-                .industryClassificationScheme("CNAE")
+                .industryClassificationScheme(IndustryClassificationScheme.CNAE)
                 .industryClassificationCode("6201")
                 .contactName("Jane Doe")
                 .contactPosition("CFO")

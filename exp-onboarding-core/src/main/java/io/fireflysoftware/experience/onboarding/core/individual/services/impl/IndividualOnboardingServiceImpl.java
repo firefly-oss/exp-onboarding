@@ -34,6 +34,7 @@ import io.fireflysoftware.experience.onboarding.core.ports.CreditReportPort;
 import io.fireflysoftware.experience.onboarding.core.ports.CreditReportQuery;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
+import io.fireflysoftware.experience.onboarding.core.ports.JourneyStep;
 import io.fireflysoftware.experience.onboarding.core.ports.RiskStep;
 import org.fireflyframework.orchestration.core.model.ExecutionStatus;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
@@ -71,8 +72,6 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
     private final CreditReportPort creditReportPort;
     private final DecisionPort decisionPort;
 
-    static final String JOURNEY_STEP = "ONBOARDING";
-
     @Override
     public Mono<JourneyStatusDTO> initiateOnboarding(InitiateOnboardingCommand command) {
         UUID partyId = command.getPartyId() != null ? command.getPartyId() : command.getTenantId();
@@ -82,8 +81,8 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
                 () -> RiskStep.afterAccess(
                         creditReportPort,
                         decisionPort,
-                        new CreditReportQuery(partyId, null, JOURNEY_STEP, Map.of()),
-                        new DecisionRequest(partyId, null, JOURNEY_STEP, Map.of()),
+                        new CreditReportQuery(partyId, null, JourneyStep.ONBOARDING, Map.of()),
+                        new DecisionRequest(partyId, null, JourneyStep.ONBOARDING, Map.of()),
                         () -> startWorkflow(command)));
     }
 

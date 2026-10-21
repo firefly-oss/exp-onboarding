@@ -17,7 +17,6 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionOutcome;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
@@ -30,7 +29,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,7 +68,7 @@ public class DomainDecisionConfiguration {
 
         @Override
         public Mono<DecisionResult> decide(DecisionRequest request) {
-            if (request.partyId() == null || request.journeyStep() == null || request.journeyStep().isBlank()) {
+            if (request.partyId() == null || request.journeyStep() == null) {
                 return Mono.error(new IllegalArgumentException("partyId and journeyStep are required"));
             }
             Map<String, Object> body = new LinkedHashMap<>();
@@ -86,11 +84,11 @@ public class DomainDecisionConfiguration {
                     .retrieve()
                     .bodyToMono(DecisionPayload.class)
                     .map(payload -> new DecisionResult(
-                            DecisionOutcome.valueOf(payload.outcome()),
+                            payload.outcome(),
                             payload.reasonCodes() == null ? List.of() : payload.reasonCodes()));
         }
 
-        private record DecisionPayload(String outcome, java.util.List<String> reasonCodes) {
+        private record DecisionPayload(DecisionOutcome outcome, java.util.List<String> reasonCodes) {
         }
     }
 }

@@ -67,11 +67,9 @@ public class SubmitCompanyDataCommand {
     private BigDecimal annualRevenue;
 
     /**
-     * Industry classification scheme, such as NAICS, SIC, ISIC, or CNAE.
+     * Industry classification scheme. The code within the scheme stays free text.
      */
-    @Size(max = 16, message = "industryClassificationScheme must be at most 16 characters")
-    @Pattern(regexp = "^[A-Za-z0-9_-]{1,16}$", message = "industryClassificationScheme must be a short scheme code")
-    private String industryClassificationScheme;
+    private IndustryClassificationScheme industryClassificationScheme;
 
     /**
      * Code within {@link #industryClassificationScheme}.

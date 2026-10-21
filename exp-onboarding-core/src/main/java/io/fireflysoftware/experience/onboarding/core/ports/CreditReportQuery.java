@@ -23,7 +23,7 @@ import java.util.UUID;
 /**
  * Credit report requested from the data domain. The journey does not call a bureau vendor.
  */
-public record CreditReportQuery(UUID partyId, UUID productId, String journeyStep, Map<String, String> attributes) {
+public record CreditReportQuery(UUID partyId, UUID productId, JourneyStep journeyStep, Map<String, String> attributes) {
 
     public CreditReportQuery {
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
