@@ -12,6 +12,8 @@ import io.fireflysoftware.domain.kyc.kyb.sdk.model.SubmitCorporateDocumentsReque
 import io.fireflysoftware.domain.kyc.kyb.sdk.model.UboData;
 import io.fireflysoftware.domain.people.sdk.api.BusinessesApi;
 import io.fireflysoftware.domain.people.sdk.api.CustomersApi;
+import io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi;
+import io.fireflysoftware.domain.people.sdk.model.IndustryClassificationRequest;
 import io.fireflysoftware.domain.people.sdk.model.RegisterAddressCommand;
 import io.fireflysoftware.domain.people.sdk.model.RegisterBusinessCommand;
 import io.fireflysoftware.domain.people.sdk.model.RegisterCustomerCommand;
@@ -144,6 +146,7 @@ public class BusinessOnboardingWorkflow {
     private final NotificationsApi notificationsApi;
     private final ObjectMapper objectMapper;
     private final Validator validator;
+    private final IndustryClassificationsApi industryClassificationsApi;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
 
@@ -252,8 +255,7 @@ public class BusinessOnboardingWorkflow {
         }
 
         // Update the legal entity with full company details via domain SDK.
-        // Industry classification is scheme plus code. The customer contract still
-        // stores a CNAE code only, so other schemes are not written into that column.
+        // Industry classification is a scheme plus a code on its own resource.
         UpdateBusinessCommand updateCmd = new UpdateBusinessCommand()
                 .partyId(partyId)
                 .legalName(cmd.getLegalName())
@@ -267,13 +269,6 @@ public class BusinessOnboardingWorkflow {
                 .contactPosition(cmd.getContactPosition())
                 .contactEmail(cmd.getContactEmail())
                 .contactPhone(cmd.getContactPhone());
-        if (classificationCode != null && (classificationScheme == null
-                || "CNAE".equalsIgnoreCase(classificationScheme))) {
-            updateCmd.cnaeCode(classificationCode);
-        } else if (classificationCode != null) {
-            log.info("Industry classification {} {} is not stored on the legal entity until customer management accepts a scheme and code",
-                    classificationScheme, classificationCode);
-        }
 
         // partyId is unique per workflow execution (minted in step 0). Combined
         // with a per-call discriminator it is a stable idempotency anchor across
@@ -296,8 +291,23 @@ public class BusinessOnboardingWorkflow {
         Mono<Void> addAddress = businessesApi.addBusinessAddress(partyId, addressCmd, addressKey)
                 .then();
 
-        return updateLegalEntity.then(addAddress)
+        return updateLegalEntity.then(addAddress).then(storeIndustryClassification(
+                        partyId, classificationScheme, classificationCode))
                 .doOnSuccess(v -> log.info("Submitted company data for partyId={}", partyId));
+    }
+
+    private Mono<Void> storeIndustryClassification(UUID partyId, String scheme, String code) {
+        if (code == null || code.isBlank()) {
+            return Mono.empty();
+        }
+        String resolvedScheme = scheme == null || scheme.isBlank() ? "CNAE" : scheme.trim().toUpperCase();
+        IndustryClassificationRequest request = new IndustryClassificationRequest()
+                .classificationScheme(IndustryClassificationRequest.ClassificationSchemeEnum.fromValue(resolvedScheme))
+                .classificationCode(code)
+                .isPrimary(true);
+        String key = IdempotencyKeys.of(
+                WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_COMPANY_DATA, "industry-classification");
+        return industryClassificationsApi.createIndustryClassification(partyId, request, key).then();
     }
 
     // ─── Gate: Wait for UBOs submission ───
@@ -353,7 +363,7 @@ public class BusinessOnboardingWorkflow {
                         .sourceSystem(SOURCE_SYSTEM))
                 .naturalPerson(new RegisterNaturalPersonCommand()
                         .givenName(ubo.getFirstName())
-                        .familyName1(ubo.getLastName())
+                        .familyName(ubo.getLastName())
                         .taxIdNumber(ubo.getDocumentNumber()));
 
         // Per-UBO deterministic key: same partyId + same UBO documentNumber must
@@ -462,7 +472,7 @@ public class BusinessOnboardingWorkflow {
                         .sourceSystem(SOURCE_SYSTEM))
                 .naturalPerson(new RegisterNaturalPersonCommand()
                         .givenName(signer.getFirstName())
-                        .familyName1(signer.getLastName())
+                        .familyName(signer.getLastName())
                         .taxIdNumber(signer.getDocumentNumber()));
 
         // Per-signer deterministic key: same partyId + same signer documentNumber

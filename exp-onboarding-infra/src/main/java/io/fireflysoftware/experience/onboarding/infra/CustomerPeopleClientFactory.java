@@ -44,4 +44,14 @@ public class CustomerPeopleClientFactory {
     public BusinessesApi businessesApi() {
         return new BusinessesApi(apiClient);
     }
+
+    @Bean
+    public io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi industryClassificationsApi() {
+        return new io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi(apiClient);
+    }
+
+    @Bean
+    public io.fireflysoftware.domain.people.sdk.api.PartyAttributesApi partyAttributesApi() {
+        return new io.fireflysoftware.domain.people.sdk.api.PartyAttributesApi(apiClient);
+    }
 }

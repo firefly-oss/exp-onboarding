@@ -51,6 +51,7 @@ class BusinessOnboardingWorkflowTest {
     @Mock private CustomersApi customersApi;
     @Mock private KybApi kybApi;
     @Mock private NotificationsApi notificationsApi;
+    @Mock private io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi industryClassificationsApi;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
@@ -62,7 +63,7 @@ class BusinessOnboardingWorkflowTest {
     @BeforeEach
     void setUp() {
         workflow = new BusinessOnboardingWorkflow(
-                businessesApi, customersApi, kybApi, notificationsApi, objectMapper, validator);
+                businessesApi, customersApi, kybApi, notificationsApi, objectMapper, validator, industryClassificationsApi);
     }
 
     @Test
@@ -71,6 +72,8 @@ class BusinessOnboardingWorkflowTest {
                 .thenReturn(Mono.just(new Object()));
         when(businessesApi.addBusinessAddress(eq(PARTY_ID), any(RegisterAddressCommand.class), anyString()))
                 .thenReturn(Mono.just(new Object()));
+        when(industryClassificationsApi.createIndustryClassification(any(), any(), anyString()))
+                .thenReturn(Mono.empty());
 
         SubmitCompanyDataCommand cmd = SubmitCompanyDataCommand.builder()
                 .legalName("Acme Corp SL")
@@ -96,7 +99,7 @@ class BusinessOnboardingWorkflowTest {
         UpdateBusinessCommand sent = captor.getValue();
         assertThat(sent.getEmployeeRange()).isEqualTo("51-250");
         assertThat(sent.getAnnualRevenue()).isEqualByComparingTo(new BigDecimal("1500000.00"));
-        assertThat(sent.getCnaeCode()).isEqualTo("6201");
+        verify(industryClassificationsApi).createIndustryClassification(eq(PARTY_ID), any(), anyString());
         assertThat(sent.getContactName()).isEqualTo("Jane Doe");
         assertThat(sent.getContactPosition()).isEqualTo("CFO");
         assertThat(sent.getContactEmail()).isEqualTo("jane@acme.example");
@@ -148,10 +151,10 @@ class BusinessOnboardingWorkflowTest {
                 .registerCustomer(registerCaptor.capture(), anyString());
         List<RegisterCustomerCommand> registered = registerCaptor.getAllValues();
         assertThat(registered.get(0).getNaturalPerson().getGivenName()).isEqualTo("John");
-        assertThat(registered.get(0).getNaturalPerson().getFamilyName1()).isEqualTo("Doe");
+        assertThat(registered.get(0).getNaturalPerson().getFamilyName()).isEqualTo("Doe");
         assertThat(registered.get(0).getNaturalPerson().getTaxIdNumber()).isEqualTo("11111111H");
         assertThat(registered.get(1).getNaturalPerson().getGivenName()).isEqualTo("Mary");
-        assertThat(registered.get(1).getNaturalPerson().getFamilyName1()).isEqualTo("Roe");
+        assertThat(registered.get(1).getNaturalPerson().getFamilyName()).isEqualTo("Roe");
         assertThat(registered.get(1).getNaturalPerson().getTaxIdNumber()).isEqualTo("22222222P");
 
         ArgumentCaptor<RegisterUbosRequest> captor = ArgumentCaptor.forClass(RegisterUbosRequest.class);
@@ -200,7 +203,7 @@ class BusinessOnboardingWorkflowTest {
         verify(customersApi).registerCustomer(registerCaptor.capture(), anyString());
         RegisterCustomerCommand registered = registerCaptor.getValue();
         assertThat(registered.getNaturalPerson().getGivenName()).isEqualTo("Jane");
-        assertThat(registered.getNaturalPerson().getFamilyName1()).isEqualTo("Smith");
+        assertThat(registered.getNaturalPerson().getFamilyName()).isEqualTo("Smith");
         assertThat(registered.getNaturalPerson().getTaxIdNumber()).isEqualTo("12345678Z");
 
         ArgumentCaptor<SubmitAuthorizedSignersRequest> captor =

@@ -5,6 +5,8 @@ import io.fireflysoftware.domain.common.notifications.sdk.model.SendNotification
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KycApi;
 import io.fireflysoftware.domain.kyc.kyb.sdk.model.AttachEvidenceCommand;
 import io.fireflysoftware.domain.people.sdk.api.CustomersApi;
+import io.fireflysoftware.domain.people.sdk.api.PartyAttributesApi;
+import io.fireflysoftware.domain.people.sdk.model.PartyAttributeRequest;
 import io.fireflysoftware.domain.people.sdk.model.RegisterAddressCommand;
 import io.fireflysoftware.domain.people.sdk.model.RegisterCustomerCommand;
 import io.fireflysoftware.domain.people.sdk.model.RegisterEmailCommand;
@@ -137,6 +139,7 @@ public class IndividualOnboardingWorkflow {
     private final NotificationsApi notificationsApi;
     private final ObjectMapper objectMapper;
     private final Validator validator;
+    private final PartyAttributesApi partyAttributesApi;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
 
@@ -154,7 +157,7 @@ public class IndividualOnboardingWorkflow {
                         .sourceSystem(SOURCE_SYSTEM))
                 .naturalPerson(new RegisterNaturalPersonCommand()
                         .givenName(cmd.getFirstName())
-                        .familyName1(cmd.getLastName()))
+                        .familyName(cmd.getLastName()))
                 .emails(List.of(new RegisterEmailCommand()
                         .email(cmd.getEmail())
                         .emailKind(RegisterEmailCommand.EmailKindEnum.PERSONAL)));
@@ -292,30 +295,32 @@ public class IndividualOnboardingWorkflow {
                     SubmitEconomicDataCommand.class);
             validateEconomicDataCrossFieldRules(cmd);
 
-            // Front-side `position` and `monthlySalary` map onto the pre-existing
-            // natural_person columns `occupation` / `monthly_income` (V11 reuse).
-            // The remaining 10 fields go straight to the new V11 columns.
+            // Occupation and monthly income stay on the person. Employment, housing,
+            // loans, and debts are party attributes.
             UpdateCustomerCommand updateCmd = new UpdateCustomerCommand()
                     .partyId(partyId)
                     .occupation(cmd.getPosition())
-                    .monthlyIncome(cmd.getMonthlySalary())
-                    .employmentStatus(cmd.getEmploymentStatus())
-                    .employmentType(cmd.getEmploymentType())
-                    .employer(cmd.getEmployer())
-                    .employmentStartDate(cmd.getEmploymentStartDate())
-                    .annualPaydays(cmd.getAnnualPaydays())
-                    .housingType(cmd.getHousingType())
-                    .housingCost(cmd.getHousingCost())
-                    .housingStartDate(cmd.getHousingStartDate())
-                    .existingLoans(cmd.getExistingLoans())
-                    .otherDebts(cmd.getOtherDebts());
+                    .monthlyIncome(cmd.getMonthlySalary());
 
             String idempotencyKey = IdempotencyKeys.of(
                     WORKFLOW_ID, partyId.toString(), STEP_RECEIVE_ECONOMIC_DATA);
 
-            return customersApi.updateCustomer(updateCmd, idempotencyKey)
-                    .doOnNext(r -> log.info("Submitted economic data for partyId={}", partyId))
-                    .then();
+            Mono<Void> updatePerson = customersApi.updateCustomer(updateCmd, idempotencyKey).then();
+            Mono<Void> attributes = reactor.core.publisher.Flux.concat(
+                    putAttribute(partyId, "employmentStatus", PartyAttributeRequest.AttributeTypeEnum.STRING, cmd.getEmploymentStatus(), idempotencyKey),
+                    putAttribute(partyId, "employmentType", PartyAttributeRequest.AttributeTypeEnum.STRING, cmd.getEmploymentType(), idempotencyKey),
+                    putAttribute(partyId, "employer", PartyAttributeRequest.AttributeTypeEnum.STRING, cmd.getEmployer(), idempotencyKey),
+                    putAttribute(partyId, "employmentStartDate", PartyAttributeRequest.AttributeTypeEnum.DATE, cmd.getEmploymentStartDate(), idempotencyKey),
+                    putAttribute(partyId, "annualPaydays", PartyAttributeRequest.AttributeTypeEnum.NUMBER, cmd.getAnnualPaydays(), idempotencyKey),
+                    putAttribute(partyId, "housingType", PartyAttributeRequest.AttributeTypeEnum.STRING, cmd.getHousingType(), idempotencyKey),
+                    putAttribute(partyId, "housingCost", PartyAttributeRequest.AttributeTypeEnum.NUMBER, cmd.getHousingCost(), idempotencyKey),
+                    putAttribute(partyId, "housingStartDate", PartyAttributeRequest.AttributeTypeEnum.DATE, cmd.getHousingStartDate(), idempotencyKey),
+                    putAttribute(partyId, "existingLoans", PartyAttributeRequest.AttributeTypeEnum.NUMBER, cmd.getExistingLoans(), idempotencyKey),
+                    putAttribute(partyId, "otherDebts", PartyAttributeRequest.AttributeTypeEnum.NUMBER, cmd.getOtherDebts(), idempotencyKey)
+            ).then();
+
+            return updatePerson.then(attributes)
+                    .doOnSuccess(v -> log.info("Submitted economic data for partyId={}", partyId));
         });
     }
 
@@ -372,6 +377,23 @@ public class IndividualOnboardingWorkflow {
         if (value == null || value.isBlank()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SIGNAL_PAYLOAD", message);
         }
+    }
+
+    private Mono<Void> putAttribute(UUID partyId, String key, PartyAttributeRequest.AttributeTypeEnum type,
+                                    Object value, String idempotencyKey) {
+        if (value == null) {
+            return Mono.empty();
+        }
+        String text = String.valueOf(value);
+        if (text.isBlank()) {
+            return Mono.empty();
+        }
+        PartyAttributeRequest request = new PartyAttributeRequest()
+                .attributeKey(key)
+                .attributeType(type)
+                .attributeValue(text);
+        return partyAttributesApi.createPartyAttribute(
+                partyId, request, IdempotencyKeys.of(idempotencyKey, key)).then();
     }
 
     // ─── Gate: Wait for identity documents ───

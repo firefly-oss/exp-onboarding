@@ -1,9 +1,9 @@
 <a href="https://fireflysoftware.io/openplatform/">
 <picture>
-  <source media="(max-width: 640px) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/firefly-oss/.github/main/profile/assets/banner-narrow-dark.svg">
-  <source media="(max-width: 640px)" srcset="https://raw.githubusercontent.com/firefly-oss/.github/main/profile/assets/banner-narrow-light.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/firefly-oss/.github/main/profile/assets/banner-dark.svg">
-  <img src="https://raw.githubusercontent.com/firefly-oss/.github/main/profile/assets/banner-light.svg" alt="Firefly OpenPlatform - Experience - Onboarding" width="100%">
+  <source media="(max-width: 640px) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fireflysoftwaresolutions/.github/main/profile/assets/banner-narrow-dark.svg">
+  <source media="(max-width: 640px)" srcset="https://raw.githubusercontent.com/fireflysoftwaresolutions/.github/main/profile/assets/banner-narrow-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fireflysoftwaresolutions/.github/main/profile/assets/banner-dark.svg">
+  <img src="https://raw.githubusercontent.com/fireflysoftwaresolutions/.github/main/profile/assets/banner-light.svg" alt="Firefly OpenPlatform - Experience - Onboarding" width="100%">
 </picture>
 </a>
 
@@ -28,6 +28,8 @@ Developed by the Firefly Software Foundation. [dev@fireflysoftware.io](mailto:de
 - [Testing](#testing)
 
 ## Overview
+
+Company onboarding stores an industry classification as a scheme and a code. A legacy `cnaeCode` value is sent as scheme `CNAE` plus that code. Person onboarding keeps occupation and monthly income on the person and writes employment, housing, loans, and debts as party attributes. Names are `familyName`.
 
 `exp-onboarding` is the experience-layer service that guides new customers through the onboarding lifecycle. It exposes two independent journey APIs — one for individual (natural person) onboarding and one for business (legal entity) onboarding — each built on the Firefly signal-driven workflow engine.
 

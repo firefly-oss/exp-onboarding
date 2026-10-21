@@ -39,6 +39,7 @@ class IndividualOnboardingWorkflowTest {
     @Mock private CustomersApi customersApi;
     @Mock private KycApi kycApi;
     @Mock private NotificationsApi notificationsApi;
+    @Mock private io.fireflysoftware.domain.people.sdk.api.PartyAttributesApi partyAttributesApi;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
@@ -48,7 +49,7 @@ class IndividualOnboardingWorkflowTest {
 
     @BeforeEach
     void setUp() {
-        workflow = new IndividualOnboardingWorkflow(customersApi, kycApi, notificationsApi, objectMapper, validator);
+        workflow = new IndividualOnboardingWorkflow(customersApi, kycApi, notificationsApi, objectMapper, validator, partyAttributesApi);
     }
 
     @Test
