@@ -22,93 +22,102 @@ import io.fireflysoftware.experience.onboarding.core.ports.AccessPort;
 import io.fireflysoftware.experience.onboarding.core.ports.AccessRequest;
 import io.fireflysoftware.experience.onboarding.core.ports.IdentityPort;
 import io.fireflysoftware.experience.onboarding.core.ports.SubjectRef;
+import io.fireflysoftware.security.center.sdk.api.AccessControllerApi;
+import io.fireflysoftware.security.center.sdk.api.IdentityControllerApi;
+import io.fireflysoftware.security.center.sdk.invoker.ApiClient;
+import io.fireflysoftware.security.center.sdk.model.IdentityRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 
 /**
- * Binds identity and access to domain-core-security-center over HTTP.
- * Experience code does not import Keycloak. The security center chooses
- * {@code firefly.security-center.identity.adapter} (sandbox, keycloak, cognito, or internal-db).
+ * Binds identity and access to domain-core-security-center through its SDK.
+ * The security center chooses its own identity adapter.
  */
 @Configuration
 @ConditionalOnProperty(name = "firefly.experience.access.adapter", havingValue = "domain", matchIfMissing = true)
 public class DomainAccessConfiguration {
 
     @Bean
-    public WebClient securityCenterWebClient(
+    public IdentityControllerApi identityControllerApi(
             @Value("${api-configuration.domain-platform.security-center.base-path:http://localhost:8085}")
             String basePath) {
-        return WebClient.builder().baseUrl(basePath).build();
+        return new IdentityControllerApi(client(basePath));
     }
 
     @Bean
-    public IdentityPort identityPort(WebClient securityCenterWebClient) {
-        return new HttpIdentityClient(securityCenterWebClient);
+    public AccessControllerApi accessControllerApi(
+            @Value("${api-configuration.domain-platform.security-center.base-path:http://localhost:8085}")
+            String basePath) {
+        return new AccessControllerApi(client(basePath));
     }
 
     @Bean
-    public AccessPort accessPort(WebClient securityCenterWebClient) {
-        return new HttpAccessClient(securityCenterWebClient);
+    public IdentityPort identityPort(IdentityControllerApi identityControllerApi) {
+        return new SdkIdentityClient(identityControllerApi);
     }
 
-    public static final class HttpIdentityClient implements IdentityPort {
+    @Bean
+    public AccessPort accessPort(AccessControllerApi accessControllerApi) {
+        return new SdkAccessClient(accessControllerApi);
+    }
 
-        private final WebClient webClient;
+    private static ApiClient client(String basePath) {
+        ApiClient client = new ApiClient();
+        client.setBasePath(basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath);
+        return client;
+    }
 
-        public HttpIdentityClient(WebClient webClient) {
-            this.webClient = webClient;
+    public static final class SdkIdentityClient implements IdentityPort {
+
+        private final IdentityControllerApi api;
+
+        public SdkIdentityClient(IdentityControllerApi api) {
+            this.api = api;
         }
 
         @Override
         public Mono<SubjectRef> resolve(String username) {
-            Map<String, String> body = new LinkedHashMap<>();
-            body.put("username", username);
-            return webClient.post()
-                    .uri("/api/v1/identity/subjects")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(IdentityPayload.class)
-                    .map(payload -> new SubjectRef(UUID.fromString(payload.actorId()), payload.provider()));
-        }
-
-        private record IdentityPayload(String actorId, String provider) {
+            return api.resolveSubject(new IdentityRequest().username(username))
+                    .map(subject -> new SubjectRef(
+                            UUID.fromString(subject.getActorId()),
+                            subject.getProvider() == null ? null : subject.getProvider().getValue()));
         }
     }
 
-    public static final class HttpAccessClient implements AccessPort {
+    public static final class SdkAccessClient implements AccessPort {
 
-        private final WebClient webClient;
+        private final AccessControllerApi api;
 
-        public HttpAccessClient(WebClient webClient) {
-            this.webClient = webClient;
+        public SdkAccessClient(AccessControllerApi api) {
+            this.api = api;
         }
 
         @Override
         public Mono<AccessDecision> check(AccessRequest request) {
-            Map<String, String> body = new LinkedHashMap<>();
-            body.put("actorId", request.actorId().toString());
-            body.put("action", request.action().name());
-            body.put("resourceType", request.resourceType());
-            body.put("resourceId", request.resourceId().toString());
-            return webClient.post()
-                    .uri("/api/v1/access/checks")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(AccessPayload.class)
-                    .map(payload -> Boolean.TRUE.equals(payload.allowed())
-                            ? AccessDecision.permit(payload.reasonCode() == null ? "SANDBOX_GRANT" : payload.reasonCode())
-                            : AccessDecision.denied(payload.reasonCode() == null ? "ACTOR_NOT_ENTITLED" : payload.reasonCode()));
+            io.fireflysoftware.security.center.sdk.model.AccessRequest body =
+                    new io.fireflysoftware.security.center.sdk.model.AccessRequest()
+                            .actorId(request.actorId() == null ? null : request.actorId().toString())
+                            .action(io.fireflysoftware.security.center.sdk.model.AccessRequest.ActionEnum
+                                    .fromValue(request.action().name()))
+                            .resourceType(resource(request.resourceType()))
+                            .resourceId(request.resourceId() == null ? null : request.resourceId().toString());
+            return api.decideAccess(body, UUID.randomUUID().toString())
+                    .map(decision -> Boolean.TRUE.equals(decision.getAllowed())
+                            ? AccessDecision.permit(decision.getReasonCode() == null ? "SANDBOX_GRANT" : decision.getReasonCode())
+                            : AccessDecision.denied(decision.getReasonCode() == null ? "ACTOR_NOT_ENTITLED" : decision.getReasonCode()));
         }
 
-        private record AccessPayload(Boolean allowed, String reasonCode) {
+        private static io.fireflysoftware.security.center.sdk.model.AccessRequest.ResourceTypeEnum resource(String value) {
+            String normalized = value == null ? "" : value.trim().toUpperCase();
+            if ("CUSTOMER".equals(normalized)) {
+                normalized = "PARTY";
+            }
+            return io.fireflysoftware.security.center.sdk.model.AccessRequest.ResourceTypeEnum.fromValue(normalized);
         }
     }
 }

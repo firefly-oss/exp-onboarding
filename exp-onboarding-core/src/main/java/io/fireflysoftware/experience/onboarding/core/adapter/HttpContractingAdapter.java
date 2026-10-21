@@ -17,48 +17,70 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
+import io.fireflysoftware.domain.common.contracts.sdk.api.ContractsApi;
+import io.fireflysoftware.domain.common.contracts.sdk.invoker.ApiClient;
+import io.fireflysoftware.domain.common.contracts.sdk.model.CreateContractCommand;
 import io.fireflysoftware.experience.onboarding.core.ports.ContractingPort;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Calls domain-common-contracts create. Quote, bind, and claim are not implemented here.
+ * Opens an agreement through domain-common-contracts. Quote, bind, and claim stay on their own domains.
  */
 @Component
 public class HttpContractingAdapter implements ContractingPort {
 
-    private static final ParameterizedTypeReference<Map<String, Object>> MAP = new ParameterizedTypeReference<>() {
-    };
-
-    private final WebClient webClient;
+    private final ContractsApi contracts;
 
     @Autowired
     public HttpContractingAdapter(
             @Value("${api-configuration.domain-platform.common-contracts.base-path:http://localhost:8090}") String basePath) {
-        this(WebClient.builder().baseUrl(basePath).build());
+        ApiClient client = new ApiClient();
+        client.setBasePath(trim(basePath));
+        this.contracts = new ContractsApi(client);
     }
 
-    HttpContractingAdapter(WebClient webClient) {
-        this.webClient = webClient;
+    HttpContractingAdapter(ContractsApi contracts) {
+        this.contracts = contracts;
     }
 
     @Override
     public Mono<UUID> open(UUID partyId, String contractType, String description) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("partyId", partyId);
-        body.put("contractType", contractType);
-        body.put("description", description);
-        return webClient.post().uri("/api/v1/contracts").bodyValue(body)
-                .retrieve()
-                .bodyToMono(MAP)
-                .map(bodyMap -> UUID.fromString(String.valueOf(bodyMap.get("contractId"))));
+        CreateContractCommand command = new CreateContractCommand()
+                .partyId(partyId)
+                .contractType(contractType)
+                .description(description);
+        return contracts.createContract(command, UUID.randomUUID().toString()).map(HttpContractingAdapter::contractId);
+    }
+
+    private static UUID contractId(Object body) {
+        if (body instanceof UUID id) {
+            return id;
+        }
+        if (body instanceof String text) {
+            return UUID.fromString(text.replace("\"", "").trim());
+        }
+        if (body instanceof Map<?, ?> map) {
+            Object id = map.get("contractId");
+            if (id == null) {
+                id = map.get("id");
+            }
+            if (id != null) {
+                return UUID.fromString(String.valueOf(id));
+            }
+        }
+        throw new IllegalStateException("domain-common-contracts did not return a contract id");
+    }
+
+    private static String trim(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalStateException("contracts base path is not set");
+        }
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 }
