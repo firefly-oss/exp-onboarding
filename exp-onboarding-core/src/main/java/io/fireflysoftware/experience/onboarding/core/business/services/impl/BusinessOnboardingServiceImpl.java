@@ -29,6 +29,16 @@ import io.fireflysoftware.experience.onboarding.core.business.queries.BusinessOn
 import io.fireflysoftware.experience.onboarding.core.business.queries.KybStatusDTO;
 import io.fireflysoftware.experience.onboarding.core.business.services.BusinessOnboardingService;
 import io.fireflysoftware.experience.onboarding.core.business.workflows.BusinessOnboardingWorkflow;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessAction;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessGuard;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessPort;
+import io.fireflysoftware.experience.onboarding.core.ports.IdentityPort;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessRequest;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportPort;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportQuery;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
+import io.fireflysoftware.experience.onboarding.core.ports.RiskStep;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
 import org.fireflyframework.orchestration.workflow.query.WorkflowQueryService;
 import org.fireflyframework.orchestration.workflow.signal.SignalService;
@@ -56,9 +66,28 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
     private final SignalService signalService;
     private final WorkflowQueryService queryService;
     private final BusinessesApi businessesApi;
+    private final AccessPort accessPort;
+    private final IdentityPort identityPort;
+    private final CreditReportPort creditReportPort;
+    private final DecisionPort decisionPort;
+
+    static final String JOURNEY_STEP = "ONBOARDING";
 
     @Override
     public Mono<BusinessOnboardingStatusDTO> initiateOnboarding(InitiateBusinessOnboardingCommand command) {
+        UUID partyId = command.getPartyId() != null ? command.getPartyId() : command.getTenantId();
+        UUID actorId = command.getActorId() != null ? command.getActorId() : partyId;
+        return AccessGuard.require(identityPort, accessPort, IdentityPort.SAMPLE_USERNAME,
+                AccessRequest.of(actorId, AccessAction.CREATE, "PARTY", partyId),
+                () -> RiskStep.afterAccess(
+                        creditReportPort,
+                        decisionPort,
+                        new CreditReportQuery(partyId, null, JOURNEY_STEP, Map.of()),
+                        new DecisionRequest(partyId, null, JOURNEY_STEP, Map.of()),
+                        () -> startWorkflow(command)));
+    }
+
+    private Mono<BusinessOnboardingStatusDTO> startWorkflow(InitiateBusinessOnboardingCommand command) {
         String correlationId = UUID.randomUUID().toString();
         Map<String, Object> input = Map.of(BusinessOnboardingWorkflow.INPUT_COMMAND, command);
 

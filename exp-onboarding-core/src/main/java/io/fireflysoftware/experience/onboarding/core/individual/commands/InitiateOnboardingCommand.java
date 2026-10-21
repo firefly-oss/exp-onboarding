@@ -48,4 +48,8 @@ public class InitiateOnboardingCommand {
     private String nationalIdNumber;
     @Builder.Default
     private String dueDiligenceLevel = "STANDARD";
+    /** Party sent to POST /api/v1/decisions. Falls back to the tenant id when omitted. */
+    private UUID partyId;
+    /** Actor checked by AccessPort. Falls back to the party id when omitted. */
+    private UUID actorId;
 }

@@ -22,6 +22,15 @@ import io.fireflysoftware.experience.onboarding.core.individual.commands.SubmitI
 import io.fireflysoftware.experience.onboarding.core.individual.commands.SubmitPersonalDataCommand;
 import io.fireflysoftware.experience.onboarding.core.individual.queries.JourneyStatusDTO;
 import io.fireflysoftware.experience.onboarding.core.individual.workflows.IndividualOnboardingWorkflow;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessDecision;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessPort;
+import io.fireflysoftware.experience.onboarding.core.ports.IdentityPort;
+import io.fireflysoftware.experience.onboarding.core.ports.SubjectRef;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportPort;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportView;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionOutcome;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionResult;
 import org.fireflyframework.orchestration.core.model.ExecutionPattern;
 import org.fireflyframework.orchestration.core.model.ExecutionStatus;
 import org.fireflyframework.orchestration.core.persistence.ExecutionState;
@@ -48,6 +57,7 @@ import static io.fireflysoftware.experience.onboarding.core.individual.workflows
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
@@ -58,12 +68,23 @@ class IndividualOnboardingServiceImplTest {
     @Mock private WorkflowEngine workflowEngine;
     @Mock private SignalService signalService;
     @Mock private WorkflowQueryService queryService;
+    @Mock private AccessPort accessPort;
+    @Mock private IdentityPort identityPort;
+    @Mock private CreditReportPort creditReportPort;
+    @Mock private DecisionPort decisionPort;
 
     private IndividualOnboardingServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new IndividualOnboardingServiceImpl(workflowEngine, signalService, queryService);
+        lenient().when(identityPort.resolve(any())).thenReturn(Mono.just(new SubjectRef(IdentityPort.SAMPLE_ACTOR, "sandbox")));
+        lenient().when(accessPort.check(any())).thenReturn(Mono.just(AccessDecision.grant()));
+        lenient().when(creditReportPort.request(any())).thenReturn(Mono.just(
+                new CreditReportView("sandbox", "sandbox-report", 640, "ILLUSTRATIVE", true)));
+        lenient().when(decisionPort.decide(any())).thenReturn(Mono.just(
+                new DecisionResult(DecisionOutcome.REFER, java.util.List.of("CREDIT_SCORE_BELOW_THRESHOLD"))));
+        service = new IndividualOnboardingServiceImpl(
+                workflowEngine, signalService, queryService, accessPort, identityPort, creditReportPort, decisionPort);
     }
 
     @Test

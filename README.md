@@ -216,3 +216,15 @@ mvn clean verify
 ```
 
 Tests cover `IndividualOnboardingServiceImpl` and `BusinessOnboardingServiceImpl` (unit tests with mocked `WorkflowEngine`, `SignalService`, and `WorkflowQueryService`), and `IndividualOnboardingController` and `BusinessOnboardingController` (WebTestClient-based tests verifying HTTP status codes and response shapes for all 16 endpoints).
+
+
+## Identity, access, and decisions
+
+Each journey command resolves the actor, then checks access, before it calls a domain port. A denial does not call the domain.
+
+1. **IdentityPort** posts to `POST /api/v1/identity/subjects` on domain-core-security-center. The default username is `sample-journey`, which resolves to actor `11111111-1111-4111-8111-111111111111`. `denied-actor` resolves to `22222222-2222-4222-8222-222222222222`. `sample-employee` resolves to `33333333-3333-4333-8333-333333333333`. Experience code does not call Keycloak. The security center property `firefly.security-center.identity.adapter` is `sandbox` by default, or `keycloak`, `cognito`, or `internal-db`.
+2. **AccessPort** posts to `POST /api/v1/access/checks` with the actor, action (`READ`, `CREATE`, `UPDATE`, `CLOSE`, or `DECIDE`), resource type, and resource id. The sample actor may READ and CREATE the sample resources. The denied actor receives `ACTOR_NOT_ENTITLED`.
+3. Lending application create and onboarding initiation then call **DecisionPort** at `POST /api/v1/decisions` on domain-lending-credit-scoring. A `DECLINE` does not call the domain command.
+4. The domain port runs only after access is allowed.
+
+Set `firefly.experience.access.adapter=sandbox` only when the security-center process is not running. The default calls the security center. Set `api-configuration.domain-platform.security-center.base-path` (default `http://localhost:8085`).

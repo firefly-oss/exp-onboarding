@@ -43,4 +43,8 @@ public class InitiateBusinessOnboardingCommand {
     private String contactEmail;
     private String contactPhone;
     private UUID tenantId;
+    /** Party sent to POST /api/v1/decisions. Falls back to the tenant id when omitted. */
+    private UUID partyId;
+    /** Actor checked by AccessPort. Falls back to the party id when omitted. */
+    private UUID actorId;
 }

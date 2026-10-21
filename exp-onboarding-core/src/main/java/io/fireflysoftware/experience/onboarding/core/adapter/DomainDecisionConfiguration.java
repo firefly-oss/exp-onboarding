@@ -84,15 +84,13 @@ public class DomainDecisionConfiguration {
                     .uri("/api/v1/decisions")
                     .bodyValue(body)
                     .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .map(HttpDecisionClient::toResult);
+                    .bodyToMono(DecisionPayload.class)
+                    .map(payload -> new DecisionResult(
+                            DecisionOutcome.valueOf(payload.outcome()),
+                            payload.reasonCodes() == null ? List.of() : payload.reasonCodes()));
         }
 
-        static DecisionResult toResult(JsonNode node) {
-            String outcome = node.path("outcome").asText();
-            List<String> reasons = new ArrayList<>();
-            node.path("reasonCodes").forEach(code -> reasons.add(code.asText()));
-            return new DecisionResult(DecisionOutcome.valueOf(outcome), reasons);
+        private record DecisionPayload(String outcome, java.util.List<String> reasonCodes) {
         }
     }
 }

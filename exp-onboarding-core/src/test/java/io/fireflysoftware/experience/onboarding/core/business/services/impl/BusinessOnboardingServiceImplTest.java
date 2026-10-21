@@ -26,6 +26,15 @@ import io.fireflysoftware.experience.onboarding.core.business.queries.BusinessOn
 import io.fireflysoftware.experience.onboarding.core.business.queries.KybStatusDTO;
 import io.fireflysoftware.experience.onboarding.core.business.workflows.BusinessOnboardingWorkflow;
 import io.fireflysoftware.domain.people.sdk.api.BusinessesApi;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessDecision;
+import io.fireflysoftware.experience.onboarding.core.ports.AccessPort;
+import io.fireflysoftware.experience.onboarding.core.ports.IdentityPort;
+import io.fireflysoftware.experience.onboarding.core.ports.SubjectRef;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportPort;
+import io.fireflysoftware.experience.onboarding.core.ports.CreditReportView;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionOutcome;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
+import io.fireflysoftware.experience.onboarding.core.ports.DecisionResult;
 import org.fireflyframework.orchestration.core.persistence.ExecutionState;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
 import org.fireflyframework.orchestration.workflow.query.WorkflowQueryService;
@@ -49,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +73,14 @@ class BusinessOnboardingServiceImplTest {
     private WorkflowQueryService queryService;
     @Mock
     private BusinessesApi businessesApi;
+    @Mock
+    private AccessPort accessPort;
+    @Mock
+    private IdentityPort identityPort;
+    @Mock
+    private CreditReportPort creditReportPort;
+    @Mock
+    private DecisionPort decisionPort;
     @Mock
     private ExecutionState executionState;
 
@@ -85,7 +103,14 @@ class BusinessOnboardingServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new BusinessOnboardingServiceImpl(workflowEngine, signalService, queryService, businessesApi);
+        lenient().when(identityPort.resolve(any())).thenReturn(Mono.just(new SubjectRef(IdentityPort.SAMPLE_ACTOR, "sandbox")));
+        lenient().when(accessPort.check(any())).thenReturn(Mono.just(AccessDecision.grant()));
+        lenient().when(creditReportPort.request(any())).thenReturn(Mono.just(
+                new CreditReportView("sandbox", "sandbox-report", 640, "ILLUSTRATIVE", true)));
+        lenient().when(decisionPort.decide(any())).thenReturn(Mono.just(
+                new DecisionResult(DecisionOutcome.REFER, java.util.List.of("CREDIT_SCORE_BELOW_THRESHOLD"))));
+        service = new BusinessOnboardingServiceImpl(
+                workflowEngine, signalService, queryService, businessesApi, accessPort, identityPort, creditReportPort, decisionPort);
     }
 
     @Test
