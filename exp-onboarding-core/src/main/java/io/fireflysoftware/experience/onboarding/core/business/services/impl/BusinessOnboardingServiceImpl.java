@@ -36,9 +36,13 @@ import io.fireflysoftware.experience.onboarding.core.ports.IdentityPort;
 import io.fireflysoftware.experience.onboarding.core.ports.AccessRequest;
 import io.fireflysoftware.experience.onboarding.core.ports.CreditReportPort;
 import io.fireflysoftware.experience.onboarding.core.ports.CreditReportQuery;
+import io.fireflysoftware.experience.onboarding.core.ports.ContractingPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
 import io.fireflysoftware.experience.onboarding.core.ports.JourneyStep;
+import io.fireflysoftware.experience.onboarding.core.ports.ProductFamilyView;
+import io.fireflysoftware.experience.onboarding.core.ports.ReferenceCatalogPort;
+import io.fireflysoftware.experience.onboarding.core.ports.Regulation;
 import io.fireflysoftware.experience.onboarding.core.ports.RiskStep;
 import org.fireflyframework.orchestration.workflow.engine.WorkflowEngine;
 import org.fireflyframework.orchestration.workflow.query.WorkflowQueryService;
@@ -48,6 +52,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -71,6 +76,8 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
     private final IdentityPort identityPort;
     private final CreditReportPort creditReportPort;
     private final DecisionPort decisionPort;
+    private final ReferenceCatalogPort referenceCatalog;
+    private final ContractingPort contracting;
 
     @Override
     public Mono<BusinessOnboardingStatusDTO> initiateOnboarding(InitiateBusinessOnboardingCommand command) {
@@ -78,12 +85,39 @@ public class BusinessOnboardingServiceImpl implements BusinessOnboardingService 
         UUID actorId = command.getActorId() != null ? command.getActorId() : partyId;
         return AccessGuard.require(identityPort, accessPort, IdentityPort.SAMPLE_USERNAME,
                 AccessRequest.of(actorId, AccessAction.CREATE, "PARTY", partyId),
-                () -> RiskStep.afterAccess(
-                        creditReportPort,
-                        decisionPort,
-                        new CreditReportQuery(partyId, null, JourneyStep.ONBOARDING, Map.of()),
-                        new DecisionRequest(partyId, null, JourneyStep.ONBOARDING, Map.of()),
-                        () -> startWorkflow(command)));
+                () -> choose(command.getProductFamily(), partyId, command));
+    }
+
+    private Mono<BusinessOnboardingStatusDTO> choose(String productFamily, UUID partyId,
+                                                     InitiateBusinessOnboardingCommand command) {
+        if (productFamily == null || productFamily.isBlank()) {
+            return decided(partyId, () -> startWorkflow(command));
+        }
+        return referenceCatalog.findProductFamily(productFamily).flatMap(family ->
+                decided(partyId, () -> family.regulation() == Regulation.REGULATED
+                        ? startWorkflow(command)
+                        : contract(partyId, command.getBusinessName(), family)));
+    }
+
+    private Mono<BusinessOnboardingStatusDTO> decided(UUID partyId,
+                                                      java.util.function.Supplier<Mono<BusinessOnboardingStatusDTO>> domain) {
+        return RiskStep.afterAccess(
+                creditReportPort,
+                decisionPort,
+                new CreditReportQuery(partyId, null, JourneyStep.ONBOARDING, Map.of()),
+                new DecisionRequest(partyId, null, JourneyStep.ONBOARDING, Map.of()),
+                domain);
+    }
+
+    private Mono<BusinessOnboardingStatusDTO> contract(UUID partyId, String description, ProductFamilyView family) {
+        return contracting.open(partyId, family.industry(), description)
+                .map(contractId -> BusinessOnboardingStatusDTO.builder()
+                        .onboardingId(contractId)
+                        .partyId(partyId)
+                        .currentPhase(family.regulation().name())
+                        .nextStep(family.industry())
+                        .completedSteps(List.of(family.code()))
+                        .build());
     }
 
     private Mono<BusinessOnboardingStatusDTO> startWorkflow(InitiateBusinessOnboardingCommand command) {

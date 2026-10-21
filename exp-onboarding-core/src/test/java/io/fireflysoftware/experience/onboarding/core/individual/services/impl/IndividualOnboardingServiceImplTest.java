@@ -72,6 +72,8 @@ class IndividualOnboardingServiceImplTest {
     @Mock private IdentityPort identityPort;
     @Mock private CreditReportPort creditReportPort;
     @Mock private DecisionPort decisionPort;
+    @Mock private io.fireflysoftware.experience.onboarding.core.ports.ReferenceCatalogPort referenceCatalog;
+    @Mock private io.fireflysoftware.experience.onboarding.core.ports.ContractingPort contracting;
 
     private IndividualOnboardingServiceImpl service;
 
@@ -84,7 +86,8 @@ class IndividualOnboardingServiceImplTest {
         lenient().when(decisionPort.decide(any())).thenReturn(Mono.just(
                 new DecisionResult(DecisionOutcome.REFER, java.util.List.of("CREDIT_SCORE_BELOW_THRESHOLD"))));
         service = new IndividualOnboardingServiceImpl(
-                workflowEngine, signalService, queryService, accessPort, identityPort, creditReportPort, decisionPort);
+                workflowEngine, signalService, queryService, accessPort, identityPort, creditReportPort, decisionPort,
+                referenceCatalog, contracting);
     }
 
     @Test
@@ -253,5 +256,36 @@ class IndividualOnboardingServiceImplTest {
                     assertThat(kycStatus.getStatus()).isEqualTo(KYC_STATUS_PENDING);
                 })
                 .verifyComplete();
+    }
+
+    @Test
+    void nonRegulatedFamily_opensContractAndDoesNotStartKyc() {
+        UUID partyId = UUID.randomUUID();
+        UUID contractId = UUID.randomUUID();
+        when(referenceCatalog.findProductFamily("COVER")).thenReturn(Mono.just(
+                new io.fireflysoftware.experience.onboarding.core.ports.ProductFamilyView(
+                        "COVER",
+                        io.fireflysoftware.experience.onboarding.core.ports.Regulation.NON_REGULATED,
+                        "COVER")));
+        when(contracting.open(eq(partyId), eq("COVER"), eq("ada@example.com"))).thenReturn(Mono.just(contractId));
+
+        InitiateOnboardingCommand cmd = InitiateOnboardingCommand.builder()
+                .partyId(partyId)
+                .productFamily("COVER")
+                .email("ada@example.com")
+                .firstName("Ada")
+                .lastName("Lovelace")
+                .build();
+
+        StepVerifier.create(service.initiateOnboarding(cmd))
+                .assertNext(status -> {
+                    assertThat(status.getOnboardingId()).isEqualTo(contractId);
+                    assertThat(status.getCurrentPhase()).isEqualTo("NON_REGULATED");
+                    assertThat(status.getNextStep()).isEqualTo("COVER");
+                })
+                .verifyComplete();
+
+        org.mockito.Mockito.verify(workflowEngine, org.mockito.Mockito.never())
+                .startWorkflow(any(), any(), any(), any(), eq(false));
     }
 }

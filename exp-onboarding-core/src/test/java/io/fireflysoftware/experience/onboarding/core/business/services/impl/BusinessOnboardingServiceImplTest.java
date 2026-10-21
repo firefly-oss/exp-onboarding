@@ -82,6 +82,10 @@ class BusinessOnboardingServiceImplTest {
     @Mock
     private DecisionPort decisionPort;
     @Mock
+    private io.fireflysoftware.experience.onboarding.core.ports.ReferenceCatalogPort referenceCatalog;
+    @Mock
+    private io.fireflysoftware.experience.onboarding.core.ports.ContractingPort contracting;
+    @Mock
     private ExecutionState executionState;
 
     private BusinessOnboardingServiceImpl service;
@@ -110,7 +114,8 @@ class BusinessOnboardingServiceImplTest {
         lenient().when(decisionPort.decide(any())).thenReturn(Mono.just(
                 new DecisionResult(DecisionOutcome.REFER, java.util.List.of("CREDIT_SCORE_BELOW_THRESHOLD"))));
         service = new BusinessOnboardingServiceImpl(
-                workflowEngine, signalService, queryService, businessesApi, accessPort, identityPort, creditReportPort, decisionPort);
+                workflowEngine, signalService, queryService, businessesApi, accessPort, identityPort, creditReportPort, decisionPort,
+                referenceCatalog, contracting);
     }
 
     @Test

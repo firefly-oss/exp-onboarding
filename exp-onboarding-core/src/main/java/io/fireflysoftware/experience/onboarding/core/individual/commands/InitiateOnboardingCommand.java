@@ -52,4 +52,9 @@ public class InitiateOnboardingCommand {
     private UUID partyId;
     /** Actor checked by AccessPort. Falls back to the party id when omitted. */
     private UUID actorId;
+    /**
+     * PRODUCT_FAMILY code. When set, regulation comes from ReferenceCatalogPort.
+     * When omitted, the existing regulated party workflow runs.
+     */
+    private String productFamily;
 }
