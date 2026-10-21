@@ -17,52 +17,48 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
+import io.fireflysoftware.domain.referencedata.sdk.api.ReferenceMastersApi;
+import io.fireflysoftware.domain.referencedata.sdk.invoker.ApiClient;
 import io.fireflysoftware.experience.onboarding.core.ports.ProductFamilyView;
 import io.fireflysoftware.experience.onboarding.core.ports.ReferenceCatalogPort;
 import io.fireflysoftware.experience.onboarding.core.ports.Regulation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
 
 /**
- * Calls domain-core-reference-data. This class does not list product families.
+ * Reads one product-family catalog row from domain-core-reference-data.
  */
 @Component
 public class HttpReferenceCatalogAdapter implements ReferenceCatalogPort {
 
-    private static final ParameterizedTypeReference<Map<String, Object>> MAP = new ParameterizedTypeReference<>() {
-    };
-
-    private final WebClient webClient;
+    private final ReferenceMastersApi catalogs;
 
     @Autowired
     public HttpReferenceCatalogAdapter(
             @Value("${api-configuration.domain-platform.reference-data.base-path:http://localhost:8089}") String basePath) {
-        this(WebClient.builder().baseUrl(basePath).build());
+        ApiClient client = new ApiClient();
+        client.setBasePath(basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath);
+        this(new ReferenceMastersApi(client));
     }
 
-    HttpReferenceCatalogAdapter(WebClient webClient) {
-        this.webClient = webClient;
+    HttpReferenceCatalogAdapter(ReferenceMastersApi catalogs) {
+        this.catalogs = catalogs;
     }
 
     @Override
     public Mono<ProductFamilyView> findProductFamily(String code) {
-        return webClient.get().uri("/api/v1/catalogs/PRODUCT_FAMILY/{code}", code)
-                .retrieve()
-                .bodyToMono(MAP)
-                .map(body -> {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> attributes = body.get("attributes") instanceof Map<?, ?> map
-                            ? (Map<String, Object>) map : Map.of();
+        return catalogs.findCatalog("PRODUCT_FAMILY", code)
+                .map(row -> {
+                    Map<String, String> attributes = row.attributes();
+                    String industry = attributes.get("industry");
                     return new ProductFamilyView(
-                            String.valueOf(body.get("code")),
+                            row.code(),
                             Regulation.valueOf(String.valueOf(attributes.get("regulation"))),
-                            attributes.get("industry") == null ? null : String.valueOf(attributes.get("industry")));
+                            industry == null || industry.isBlank() ? null : industry);
                 });
     }
 }

@@ -19,6 +19,7 @@ package io.fireflysoftware.experience.onboarding.core.business.search.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.NullNode;
+import io.fireflysoftware.data.business.intelligence.sdk.api.SelectCompanyApi;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchRequest;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchService;
 import io.fireflysoftware.experience.onboarding.infra.BusinessIntelligenceClientFactory;
@@ -40,16 +41,17 @@ import java.util.Map;
 @Service
 public class BusinessSearchServiceImpl implements BusinessSearchService {
 
-    private static final String SELECT_COMPANY_PATH = "/api/v1/business-intelligence/select-company";
     private static final String ENRICHMENT_SMART_PATH = "/api/v1/enrichment/smart";
 
     private final WebClient client;
+    private final SelectCompanyApi companies;
     private final BusinessIntelligenceProperties properties;
 
     public BusinessSearchServiceImpl(
             @Qualifier(BusinessIntelligenceClientFactory.BEAN_NAME) WebClient client,
             BusinessIntelligenceProperties properties) {
         this.client = client;
+        this.companies = new SelectCompanyApi(properties.getBasePath());
         this.properties = properties;
     }
 
@@ -63,12 +65,7 @@ public class BusinessSearchServiceImpl implements BusinessSearchService {
         log.debug("Searching businesses nationalId={} name={} country={}",
                 request.getNationalId(), request.getName(), request.getCountry());
 
-        return client.post()
-                .uri(SELECT_COMPANY_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(request)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
+        return companies.selectCompany(request)
                 .onErrorMap(WebClientResponseException.class, this::mapUpstreamError);
     }
 

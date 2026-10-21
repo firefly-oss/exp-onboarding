@@ -29,9 +29,8 @@ import reactor.netty.http.client.HttpClient;
 import java.util.concurrent.TimeUnit;
 
 /**
- * WebClient configured for the business-intelligence domain service.
- * The SDK module for that service is not generated locally, so we call its
- * REST endpoints directly via WebClient instead of through a generated client.
+ * WebClient for {@code POST /api/v1/enrichment/smart}. No service implements that read.
+ * Company search uses {@code SelectCompanyApi}.
  */
 @Configuration
 public class BusinessIntelligenceClientFactory {

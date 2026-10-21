@@ -17,6 +17,8 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
+import io.fireflysoftware.domain.lending.creditscoring.sdk.api.DecisionsApi;
+import io.fireflysoftware.domain.lending.creditscoring.sdk.invoker.ApiClient;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionOutcome;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
@@ -26,12 +28,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Calls domain-lending-credit-scoring {@code POST /api/v1/decisions}.
@@ -47,7 +44,10 @@ public class DomainDecisionConfiguration {
     public RiskDecisionClient riskDecisionClient(
             @Value("${api-configuration.domain-platform.lending-credit-scoring.base-path:http://localhost:8042}")
             String basePath) {
-        return new HttpDecisionClient(WebClient.builder().baseUrl(basePath).build());
+        String url = basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath;
+        ApiClient client = new ApiClient();
+        client.setBasePath(url);
+        return new SdkDecisionClient(new DecisionsApi(client));
     }
 
     @Bean
@@ -56,14 +56,14 @@ public class DomainDecisionConfiguration {
     }
 
     /**
-     * HTTP client for {@code POST /api/v1/decisions}. Package-visible so tests can construct it.
+     * SDK client for {@code POST /api/v1/decisions}. Package-visible so tests can construct it.
      */
-    public static final class HttpDecisionClient implements RiskDecisionClient {
+    public static final class SdkDecisionClient implements RiskDecisionClient {
 
-        private final WebClient webClient;
+        private final DecisionsApi decisions;
 
-        public HttpDecisionClient(WebClient webClient) {
-            this.webClient = webClient;
+        public SdkDecisionClient(DecisionsApi decisions) {
+            this.decisions = decisions;
         }
 
         @Override
@@ -71,24 +71,12 @@ public class DomainDecisionConfiguration {
             if (request.partyId() == null || request.journeyStep() == null) {
                 return Mono.error(new IllegalArgumentException("partyId and journeyStep are required"));
             }
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("partyId", request.partyId());
-            if (request.productId() != null) {
-                body.put("productId", request.productId());
-            }
-            body.put("journeyStep", request.journeyStep());
-            body.put("attributes", request.attributes());
-            return webClient.post()
-                    .uri("/api/v1/decisions")
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(DecisionPayload.class)
-                    .map(payload -> new DecisionResult(
-                            payload.outcome(),
-                            payload.reasonCodes() == null ? List.of() : payload.reasonCodes()));
-        }
-
-        private record DecisionPayload(DecisionOutcome outcome, java.util.List<String> reasonCodes) {
+            return decisions.evaluateDecision(
+                            request.partyId(),
+                            request.productId(),
+                            request.journeyStep().name(),
+                            request.attributes())
+                    .map(view -> new DecisionResult(DecisionOutcome.valueOf(view.outcome()), view.reasonCodes()));
         }
     }
 }

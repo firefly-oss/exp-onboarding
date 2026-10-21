@@ -48,6 +48,21 @@
             <artifactId>domain-core-security-center-sdk</artifactId>
             <version>26.10.4</version>
         </dependency>
+        <dependency>
+            <groupId>io.fireflysoftware</groupId>
+            <artifactId>domain-core-reference-data-sdk</artifactId>
+            <version>26.10.4</version>
+        </dependency>
+        <dependency>
+            <groupId>io.fireflysoftware</groupId>
+            <artifactId>domain-lending-credit-scoring-sdk</artifactId>
+            <version>26.10.4</version>
+        </dependency>
+        <dependency>
+            <groupId>io.fireflysoftware</groupId>
+            <artifactId>domain-data-business-intelligence-sdk</artifactId>
+            <version>26.10.4</version>
+        </dependency>
 
         <!-- Common Libraries -->
         <dependency>
