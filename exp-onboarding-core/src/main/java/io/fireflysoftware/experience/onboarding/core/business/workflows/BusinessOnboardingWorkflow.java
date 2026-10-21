@@ -242,10 +242,18 @@ public class BusinessOnboardingWorkflow {
     public Mono<Void> receiveCompanyData(@Variable(VAR_PARTY_ID) UUID partyId,
                                           Object signalData) {
         SubmitCompanyDataCommand cmd = mapAndValidateSignalPayload(signalData, SubmitCompanyDataCommand.class);
+        String classificationCode = cmd.getIndustryClassificationCode();
+        String classificationScheme = cmd.getIndustryClassificationScheme();
+        if ((classificationCode == null || classificationCode.isBlank()) && cmd.getCnaeCode() != null) {
+            classificationCode = cmd.getCnaeCode();
+            if (classificationScheme == null || classificationScheme.isBlank()) {
+                classificationScheme = "CNAE";
+            }
+        }
 
         // Update the legal entity with full company details via domain SDK.
-        // BE-5b: propagate the new corporate fields (employeeRange, annualRevenue,
-        // cnaeCode, contactName, contactPosition, contactEmail, contactPhone).
+        // Industry classification is scheme plus code. The customer contract still
+        // stores a CNAE code only, so other schemes are not written into that column.
         UpdateBusinessCommand updateCmd = new UpdateBusinessCommand()
                 .partyId(partyId)
                 .legalName(cmd.getLegalName())
@@ -255,11 +263,17 @@ public class BusinessOnboardingWorkflow {
                 .industryDescription(cmd.getBusinessActivity())
                 .employeeRange(cmd.getNumberOfEmployees())
                 .annualRevenue(cmd.getAnnualRevenue())
-                .cnaeCode(cmd.getCnaeCode())
                 .contactName(cmd.getContactName())
                 .contactPosition(cmd.getContactPosition())
                 .contactEmail(cmd.getContactEmail())
                 .contactPhone(cmd.getContactPhone());
+        if (classificationCode != null && (classificationScheme == null
+                || "CNAE".equalsIgnoreCase(classificationScheme))) {
+            updateCmd.cnaeCode(classificationCode);
+        } else if (classificationCode != null) {
+            log.info("Industry classification {} {} is not stored on the legal entity until customer management accepts a scheme and code",
+                    classificationScheme, classificationCode);
+        }
 
         // partyId is unique per workflow execution (minted in step 0). Combined
         // with a per-call discriminator it is a stable idempotency anchor across

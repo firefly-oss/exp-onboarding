@@ -50,7 +50,20 @@ public class SubmitCompanyDataCommand {
     private BigDecimal annualRevenue;
 
     /**
-     * CNAE economic activity code (Spanish national classification). Up to 10 characters.
+     * Industry classification scheme, such as NAICS, SIC, ISIC, or CNAE.
+     */
+    @Size(max = 16, message = "industryClassificationScheme must be at most 16 characters")
+    @Pattern(regexp = "^[A-Za-z0-9_-]{1,16}$", message = "industryClassificationScheme must be a short scheme code")
+    private String industryClassificationScheme;
+
+    /**
+     * Code within {@link #industryClassificationScheme}.
+     */
+    @Size(max = 16, message = "industryClassificationCode must be at most 16 characters")
+    private String industryClassificationCode;
+
+    /**
+     * Deprecated alias for an industry classification code when the scheme is CNAE.
      */
     @Size(max = 10, message = "cnaeCode must be at most 10 characters")
     private String cnaeCode;

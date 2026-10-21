@@ -936,10 +936,20 @@ components:
           type: string
         annualRevenue:
           type: number
+        industryClassificationScheme:
+          maxLength: 16
+          pattern: ^[A-Za-z0-9_-]{1,16}$
+          type: string
+          description: Industry classification scheme, such as NAICS, SIC, ISIC, or CNAE
+        industryClassificationCode:
+          maxLength: 16
+          type: string
+          description: Code within the industry classification scheme
         cnaeCode:
           maxLength: 10
           minLength: 0
           type: string
+          description: Deprecated alias for an industry classification code when the scheme is CNAE
         contactName:
           type: string
         contactPosition:
