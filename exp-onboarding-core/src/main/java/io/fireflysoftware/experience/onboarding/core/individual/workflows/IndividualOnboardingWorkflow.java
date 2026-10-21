@@ -125,6 +125,7 @@ public class IndividualOnboardingWorkflow {
     // ─── Workflow variable names ───
     public static final String VAR_PARTY_ID = "partyId";
     public static final String VAR_KYC_CASE_ID = "kycCaseId";
+    public static final String VAR_WELCOME_DOCUMENT_ID = "welcomeDocumentId";
 
     // ─── Journey phases ───
     public static final String PHASE_AWAITING_PERSONAL_DATA = "AWAITING_PERSONAL_DATA";
@@ -214,7 +215,25 @@ public class IndividualOnboardingWorkflow {
         String idempotencyKey = IdempotencyKeys.of(
                 WORKFLOW_ID, partyId.toString(), STEP_OPEN_KYC_CASE);
 
-        return kycApi.openCase(idempotencyKey)
+        java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("partyId", partyId);
+        body.put("dueDiligenceLevel", "STANDARD");
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("X-Idempotency-Key", idempotencyKey);
+        return kycApi.getApiClient().invokeAPI(
+                        "/api/v1/kyc/cases",
+                        org.springframework.http.HttpMethod.POST,
+                        java.util.Map.of(),
+                        new org.springframework.util.LinkedMultiValueMap<>(),
+                        body,
+                        headers,
+                        new org.springframework.util.LinkedMultiValueMap<>(),
+                        new org.springframework.util.LinkedMultiValueMap<>(),
+                        java.util.List.of(org.springframework.http.MediaType.APPLICATION_JSON),
+                        org.springframework.http.MediaType.APPLICATION_JSON,
+                        new String[0],
+                        new org.springframework.core.ParameterizedTypeReference<java.util.Map<String, Object>>() {})
+                .bodyToMono(new org.springframework.core.ParameterizedTypeReference<java.util.Map<String, Object>>() {})
                 .flatMap(response -> extractUuid(response, FIELD_CASE_ID))
                 // See comment on registerParty: workflow engine does not honour @SetVariable.
                 .doOnNext(caseId -> ctx.putVariable(VAR_KYC_CASE_ID, caseId))
@@ -240,7 +259,11 @@ public class IndividualOnboardingWorkflow {
 
         return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent welcome notification for partyId={}", partyId))
-                .then();
+                .then()
+                .onErrorResume(ex -> {
+                    log.warn("Welcome notification did not complete for partyId={}: {}", partyId, ex.getMessage());
+                    return Mono.empty();
+                });
     }
 
     // ─── Gate: Wait for personal data submission ───
@@ -477,7 +500,8 @@ public class IndividualOnboardingWorkflow {
     }
 
     @WorkflowStep(id = STEP_SEND_COMPLETION, dependsOn = STEP_ACTIVATE_PARTY)
-    public Mono<Void> sendCompletionNotification(@Variable(VAR_PARTY_ID) UUID partyId) {
+    public Mono<Void> sendCompletionNotification(@Variable(VAR_PARTY_ID) UUID partyId,
+                                                 ExecutionContext ctx) {
         SendNotificationCommand notifCmd = new SendNotificationCommand()
                 .partyId(partyId)
                 .channel(NOTIFICATION_CHANNEL)
@@ -489,7 +513,16 @@ public class IndividualOnboardingWorkflow {
 
         return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent completion notification for partyId={}", partyId))
+                .onErrorResume(ex -> {
+                    log.warn("Completion notification did not complete for partyId={}: {}", partyId, ex.getMessage());
+                    return Mono.empty();
+                })
                 .then(kitDocumentsApi.issue("welcome", partyId, partyId, idempotencyKey))
+                .doOnNext(documentId -> {
+                    if (ctx != null) {
+                        ctx.putVariable(VAR_WELCOME_DOCUMENT_ID, documentId);
+                    }
+                })
                 .then();
     }
 
@@ -538,6 +571,7 @@ public class IndividualOnboardingWorkflow {
                 .onboardingId(UUID.fromString(ctx.getCorrelationId()))
                 .partyId(toUuid(ctx.getVariable(VAR_PARTY_ID)))
                 .kycCaseId(toUuid(ctx.getVariable(VAR_KYC_CASE_ID)))
+                .welcomeDocumentId(toUuid(ctx.getVariable(VAR_WELCOME_DOCUMENT_ID)))
                 .currentPhase(deriveCurrentPhase(steps))
                 .completedSteps(steps.entrySet().stream()
                         .filter(e -> e.getValue() == StepStatus.DONE)

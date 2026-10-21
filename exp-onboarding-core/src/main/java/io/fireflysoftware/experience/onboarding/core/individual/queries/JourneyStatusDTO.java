@@ -39,6 +39,7 @@ public class JourneyStatusDTO {
     private UUID onboardingId;
     private UUID partyId;
     private UUID kycCaseId;
+    private UUID welcomeDocumentId;
     private String currentPhase;
     private List<String> completedSteps;
     private String nextStep;

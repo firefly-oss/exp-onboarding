@@ -53,6 +53,11 @@ public class InitiateOnboardingCommand {
     /** Actor checked by AccessPort. Falls back to the party id when omitted. */
     private UUID actorId;
     /**
+     * Identity username resolved by the security center before the access check.
+     * Blank falls back to {@code sample-journey}.
+     */
+    private String username;
+    /**
      * PRODUCT_FAMILY code. When set, regulation comes from ReferenceCatalogPort.
      * When omitted, the existing regulated party workflow runs.
      */

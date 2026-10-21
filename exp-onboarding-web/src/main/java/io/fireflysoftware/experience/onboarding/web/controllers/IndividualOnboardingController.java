@@ -65,7 +65,11 @@ public class IndividualOnboardingController {
                description = "Start a new individual onboarding journey — registers the party, "
                    + "opens a KYC case, and sends a welcome notification")
     public Mono<ResponseEntity<JourneyStatusDTO>> initiateOnboarding(
+            @RequestHeader(value = "X-Firefly-Username", required = false) String username,
             @Valid @RequestBody InitiateOnboardingCommand command) {
+        if (username != null && !username.isBlank()) {
+            command.setUsername(username);
+        }
         return onboardingService.initiateOnboarding(command)
                 .map(status -> ResponseEntity.status(HttpStatus.CREATED).body(status));
     }

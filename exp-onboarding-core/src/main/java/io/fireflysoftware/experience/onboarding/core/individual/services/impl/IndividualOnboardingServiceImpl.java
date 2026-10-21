@@ -83,7 +83,7 @@ public class IndividualOnboardingServiceImpl implements IndividualOnboardingServ
     public Mono<JourneyStatusDTO> initiateOnboarding(InitiateOnboardingCommand command) {
         UUID partyId = command.getPartyId() != null ? command.getPartyId() : command.getTenantId();
         UUID actorId = command.getActorId() != null ? command.getActorId() : partyId;
-        return AccessGuard.require(identityPort, accessPort, IdentityPort.SAMPLE_USERNAME,
+        return AccessGuard.require(identityPort, accessPort, command.getUsername(),
                 AccessRequest.of(actorId, AccessAction.CREATE, "PARTY", partyId),
                 () -> choose(command.getProductFamily(),
                         () -> startWorkflow(command),

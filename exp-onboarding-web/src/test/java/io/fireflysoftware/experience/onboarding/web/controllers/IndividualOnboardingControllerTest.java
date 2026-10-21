@@ -70,7 +70,7 @@ class IndividualOnboardingControllerTest {
                 .email("john.doe@example.com")
                 .build();
 
-        StepVerifier.create(controller.initiateOnboarding(command))
+        StepVerifier.create(controller.initiateOnboarding(null, command))
                 .assertNext(response -> {
                     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
                     JourneyStatusDTO body = response.getBody();

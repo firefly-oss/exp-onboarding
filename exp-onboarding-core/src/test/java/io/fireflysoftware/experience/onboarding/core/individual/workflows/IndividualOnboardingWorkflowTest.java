@@ -214,7 +214,7 @@ class IndividualOnboardingWorkflowTest {
         when(kitDocumentsApi.issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString()))
                 .thenReturn(Mono.just(UUID.randomUUID()));
 
-        StepVerifier.create(workflow.sendCompletionNotification(PARTY_ID)).verifyComplete();
+        StepVerifier.create(workflow.sendCompletionNotification(PARTY_ID, null)).verifyComplete();
 
         verify(kitDocumentsApi).issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString());
     }
