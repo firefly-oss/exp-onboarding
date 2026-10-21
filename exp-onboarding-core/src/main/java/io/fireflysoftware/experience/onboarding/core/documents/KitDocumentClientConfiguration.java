@@ -16,7 +16,7 @@
 
 package io.fireflysoftware.experience.onboarding.core.documents;
 
-import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsControllerApi;
 import io.fireflysoftware.domain.common.contracts.sdk.invoker.ApiClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -26,10 +26,10 @@ import org.springframework.context.annotation.Configuration;
 public class KitDocumentClientConfiguration {
 
     @Bean
-    public KitDocumentsApi kitDocumentsApi(
+    public KitDocumentsControllerApi kitDocumentsApi(
             @Value("${firefly.onboarding.contracts-base-url:http://localhost:8080}") String baseUrl) {
         ApiClient client = new ApiClient();
         client.setBasePath(baseUrl);
-        return new KitDocumentsApi(client);
+        return new KitDocumentsControllerApi(client);
     }
 }

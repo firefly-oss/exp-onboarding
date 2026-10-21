@@ -17,8 +17,9 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
-import io.fireflysoftware.domain.lending.creditscoring.sdk.api.DecisionsApi;
+import io.fireflysoftware.domain.lending.creditscoring.sdk.api.DecisionApi;
 import io.fireflysoftware.domain.lending.creditscoring.sdk.invoker.ApiClient;
+import io.fireflysoftware.domain.lending.creditscoring.sdk.model.DecisionResponse;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionOutcome;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionPort;
 import io.fireflysoftware.experience.onboarding.core.ports.DecisionRequest;
@@ -47,7 +48,7 @@ public class DomainDecisionConfiguration {
         String url = basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath;
         ApiClient client = new ApiClient();
         client.setBasePath(url);
-        return new SdkDecisionClient(new DecisionsApi(client));
+        return new SdkDecisionClient(new DecisionApi(client));
     }
 
     @Bean
@@ -60,9 +61,9 @@ public class DomainDecisionConfiguration {
      */
     public static final class SdkDecisionClient implements RiskDecisionClient {
 
-        private final DecisionsApi decisions;
+        private final DecisionApi decisions;
 
-        public SdkDecisionClient(DecisionsApi decisions) {
+        public SdkDecisionClient(DecisionApi decisions) {
             this.decisions = decisions;
         }
 
@@ -71,12 +72,24 @@ public class DomainDecisionConfiguration {
             if (request.partyId() == null || request.journeyStep() == null) {
                 return Mono.error(new IllegalArgumentException("partyId and journeyStep are required"));
             }
-            return decisions.evaluateDecision(
-                            request.partyId(),
-                            request.productId(),
-                            request.journeyStep().name(),
-                            request.attributes())
-                    .map(view -> new DecisionResult(DecisionOutcome.valueOf(view.outcome()), view.reasonCodes()));
+            io.fireflysoftware.domain.lending.creditscoring.sdk.model.DecisionRequest body =
+                    new io.fireflysoftware.domain.lending.creditscoring.sdk.model.DecisionRequest()
+                            .partyId(request.partyId())
+                            .productId(request.productId())
+                            .journeyStep(io.fireflysoftware.domain.lending.creditscoring.sdk.model.DecisionRequest.JourneyStepEnum
+                                    .fromValue(request.journeyStep().name()))
+                            .attributes(new java.util.HashMap<>(request.attributes()));
+            return decisions.evaluateDecision(body)
+                    .map(view -> new DecisionResult(
+                            DecisionOutcome.valueOf(outcome(view)),
+                            view.getReasonCodes() == null ? java.util.List.of() : view.getReasonCodes()));
+        }
+
+        private static String outcome(DecisionResponse view) {
+            if (view.getOutcome() == null || view.getOutcome().getValue() == null) {
+                throw new IllegalStateException("DOMAIN_RESPONSE_UNREADABLE");
+            }
+            return view.getOutcome().getValue();
         }
     }
 }

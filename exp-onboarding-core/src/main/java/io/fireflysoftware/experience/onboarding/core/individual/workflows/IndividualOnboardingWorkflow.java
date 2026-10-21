@@ -17,7 +17,9 @@
 
 package io.fireflysoftware.experience.onboarding.core.individual.workflows;
 
-import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsControllerApi;
+import io.fireflysoftware.domain.common.contracts.sdk.model.IssueBody;
+import io.fireflysoftware.domain.common.contracts.sdk.model.RecordedId;
 import io.fireflysoftware.domain.common.notifications.sdk.api.NotificationsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.model.SendNotificationCommand;
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KycApi;
@@ -159,7 +161,7 @@ public class IndividualOnboardingWorkflow {
     private final ObjectMapper objectMapper;
     private final Validator validator;
     private final PartyAttributesApi partyAttributesApi;
-    private final KitDocumentsApi kitDocumentsApi;
+    private final KitDocumentsControllerApi kitDocumentsApi;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
 
@@ -517,7 +519,8 @@ public class IndividualOnboardingWorkflow {
                     log.warn("Completion notification did not complete for partyId={}: {}", partyId, ex.getMessage());
                     return Mono.empty();
                 })
-                .then(kitDocumentsApi.issue("welcome", partyId, partyId, idempotencyKey))
+                .then(kitDocumentsApi.issue(new IssueBody().templateCode("welcome").partyId(partyId).contractId(partyId),
+                        idempotencyKey).map(RecordedId::getId))
                 .doOnNext(documentId -> {
                     if (ctx != null) {
                         ctx.putVariable(VAR_WELCOME_DOCUMENT_ID, documentId);

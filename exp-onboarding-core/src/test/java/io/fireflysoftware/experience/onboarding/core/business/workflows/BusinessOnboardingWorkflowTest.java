@@ -18,7 +18,9 @@
 package io.fireflysoftware.experience.onboarding.core.business.workflows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsControllerApi;
+import io.fireflysoftware.domain.common.contracts.sdk.model.IssueBody;
+import io.fireflysoftware.domain.common.contracts.sdk.model.RecordedId;
 import io.fireflysoftware.domain.common.notifications.sdk.api.NotificationsApi;
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KybApi;
 import io.fireflysoftware.domain.kyc.kyb.sdk.model.RegisterUbosRequest;
@@ -71,7 +73,7 @@ class BusinessOnboardingWorkflowTest {
     @Mock private KybApi kybApi;
     @Mock private NotificationsApi notificationsApi;
     @Mock private io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi industryClassificationsApi;
-    @Mock private KitDocumentsApi kitDocumentsApi;
+    @Mock private KitDocumentsControllerApi kitDocumentsApi;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
@@ -300,11 +302,14 @@ class BusinessOnboardingWorkflowTest {
     @Test
     void sendCompletionNotification_issuesWelcomeThroughTheDocumentDomainSdk() {
         when(notificationsApi.sendNotification(any(), anyString())).thenReturn(Mono.empty());
-        when(kitDocumentsApi.issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString()))
-                .thenReturn(Mono.just(UUID.randomUUID()));
+        when(kitDocumentsApi.issue(any(IssueBody.class), anyString()))
+                .thenReturn(Mono.just(new RecordedId().id(UUID.randomUUID())));
 
         StepVerifier.create(workflow.sendCompletionNotification(PARTY_ID)).verifyComplete();
 
-        verify(kitDocumentsApi).issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString());
+        verify(kitDocumentsApi).issue(org.mockito.ArgumentMatchers.argThat(body ->
+                "welcome".equals(body.getTemplateCode())
+                        && PARTY_ID.equals(body.getPartyId())
+                        && PARTY_ID.equals(body.getContractId())), anyString());
     }
 }

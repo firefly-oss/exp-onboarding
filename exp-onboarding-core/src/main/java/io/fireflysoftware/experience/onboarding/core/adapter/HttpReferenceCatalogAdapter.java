@@ -17,7 +17,7 @@
 
 package io.fireflysoftware.experience.onboarding.core.adapter;
 
-import io.fireflysoftware.domain.referencedata.sdk.api.ReferenceMastersApi;
+import io.fireflysoftware.domain.referencedata.sdk.api.CatalogsApi;
 import io.fireflysoftware.domain.referencedata.sdk.invoker.ApiClient;
 import io.fireflysoftware.experience.onboarding.core.ports.ProductFamilyView;
 import io.fireflysoftware.experience.onboarding.core.ports.ReferenceCatalogPort;
@@ -35,28 +35,29 @@ import java.util.Map;
 @Component
 public class HttpReferenceCatalogAdapter implements ReferenceCatalogPort {
 
-    private final ReferenceMastersApi catalogs;
+    private final CatalogsApi catalogs;
 
     @Autowired
     public HttpReferenceCatalogAdapter(
             @Value("${api-configuration.domain-platform.reference-data.base-path:http://localhost:8089}") String basePath) {
         ApiClient client = new ApiClient();
         client.setBasePath(basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath);
-        this(new ReferenceMastersApi(client));
+        this(new CatalogsApi(client));
     }
 
-    HttpReferenceCatalogAdapter(ReferenceMastersApi catalogs) {
+    HttpReferenceCatalogAdapter(CatalogsApi catalogs) {
         this.catalogs = catalogs;
     }
 
     @Override
     public Mono<ProductFamilyView> findProductFamily(String code) {
-        return catalogs.findCatalog("PRODUCT_FAMILY", code)
+        return catalogs.findCatalogEntry("PRODUCT_FAMILY", code)
                 .map(row -> {
-                    Map<String, String> attributes = row.attributes();
+                    Map<String, String> attributes = row.getAttributes() == null ? Map.of() : row.getAttributes();
                     String industry = attributes.get("industry");
+                    String familyCode = row.getCode() == null || row.getCode().isBlank() ? code : row.getCode();
                     return new ProductFamilyView(
-                            row.code(),
+                            familyCode,
                             Regulation.valueOf(String.valueOf(attributes.get("regulation"))),
                             industry == null || industry.isBlank() ? null : industry);
                 });

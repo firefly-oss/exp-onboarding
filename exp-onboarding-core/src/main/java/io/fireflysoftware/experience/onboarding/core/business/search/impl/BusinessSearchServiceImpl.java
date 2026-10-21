@@ -18,8 +18,11 @@
 package io.fireflysoftware.experience.onboarding.core.business.search.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
-import io.fireflysoftware.data.business.intelligence.sdk.api.SelectCompanyApi;
+import io.fireflysoftware.data.business.intelligence.sdk.api.BusinessIntelligenceApi;
+import io.fireflysoftware.data.business.intelligence.sdk.invoker.ApiClient;
+import io.fireflysoftware.data.business.intelligence.sdk.model.SelectCompanyRequest;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchRequest;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchService;
 import io.fireflysoftware.experience.onboarding.infra.BusinessIntelligenceClientFactory;
@@ -44,14 +47,20 @@ public class BusinessSearchServiceImpl implements BusinessSearchService {
     private static final String ENRICHMENT_SMART_PATH = "/api/v1/enrichment/smart";
 
     private final WebClient client;
-    private final SelectCompanyApi companies;
+    private final BusinessIntelligenceApi companies;
     private final BusinessIntelligenceProperties properties;
+    private final ObjectMapper json = new ObjectMapper();
 
     public BusinessSearchServiceImpl(
             @Qualifier(BusinessIntelligenceClientFactory.BEAN_NAME) WebClient client,
             BusinessIntelligenceProperties properties) {
         this.client = client;
-        this.companies = new SelectCompanyApi(properties.getBasePath());
+        ApiClient apiClient = new ApiClient();
+        String basePath = properties.getBasePath();
+        if (basePath != null && !basePath.isBlank()) {
+            apiClient.setBasePath(basePath.endsWith("/") ? basePath.substring(0, basePath.length() - 1) : basePath);
+        }
+        this.companies = new BusinessIntelligenceApi(apiClient);
         this.properties = properties;
     }
 
@@ -65,7 +74,18 @@ public class BusinessSearchServiceImpl implements BusinessSearchService {
         log.debug("Searching businesses nationalId={} name={} country={}",
                 request.getNationalId(), request.getName(), request.getCountry());
 
-        return companies.selectCompany(request)
+        if (properties.getBasePath() == null || properties.getBasePath().isBlank()) {
+            return Mono.error(new IllegalStateException("PROPERTY_NOT_SET"));
+        }
+        return companies.selectCompany(new SelectCompanyRequest()
+                        .name(request.getName())
+                        .city(request.getCity())
+                        .country(request.getCountry())
+                        .address(request.getAddress())
+                        .nationalId(request.getNationalId())
+                        .postCode(request.getPostCode()))
+                .collectList()
+                .map(rows -> json.<JsonNode>valueToTree(rows))
                 .onErrorMap(WebClientResponseException.class, this::mapUpstreamError);
     }
 

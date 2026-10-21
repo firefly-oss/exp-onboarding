@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * WebClient for {@code POST /api/v1/enrichment/smart}. No service implements that read.
- * Company search uses {@code SelectCompanyApi}.
+ * Company search uses the generated {@code BusinessIntelligenceApi}.
  */
 @Configuration
 public class BusinessIntelligenceClientFactory {
