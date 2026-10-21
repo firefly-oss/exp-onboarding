@@ -17,6 +17,7 @@
 
 package io.fireflysoftware.experience.onboarding.core.business.workflows;
 
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.api.NotificationsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.model.SendNotificationCommand;
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KybApi;
@@ -165,6 +166,7 @@ public class BusinessOnboardingWorkflow {
     private final ObjectMapper objectMapper;
     private final Validator validator;
     private final IndustryClassificationsApi industryClassificationsApi;
+    private final KitDocumentsApi kitDocumentsApi;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
 
@@ -583,6 +585,7 @@ public class BusinessOnboardingWorkflow {
 
         return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent business completion notification for partyId={}", partyId))
+                .then(kitDocumentsApi.issue("welcome", partyId, partyId, idempotencyKey))
                 .then();
     }
 

@@ -17,6 +17,7 @@
 
 package io.fireflysoftware.experience.onboarding.core.individual.workflows;
 
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.api.NotificationsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.model.SendNotificationCommand;
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KycApi;
@@ -157,6 +158,7 @@ public class IndividualOnboardingWorkflow {
     private final ObjectMapper objectMapper;
     private final Validator validator;
     private final PartyAttributesApi partyAttributesApi;
+    private final KitDocumentsApi kitDocumentsApi;
 
     // ─── Phase 1: Initiation (executes on startWorkflow) ───
 
@@ -487,6 +489,7 @@ public class IndividualOnboardingWorkflow {
 
         return notificationsApi.sendNotification(notifCmd, idempotencyKey)
                 .doOnNext(r -> log.info("Sent completion notification for partyId={}", partyId))
+                .then(kitDocumentsApi.issue("welcome", partyId, partyId, idempotencyKey))
                 .then();
     }
 

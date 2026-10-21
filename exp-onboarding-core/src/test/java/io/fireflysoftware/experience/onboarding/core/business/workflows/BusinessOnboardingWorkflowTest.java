@@ -18,6 +18,7 @@
 package io.fireflysoftware.experience.onboarding.core.business.workflows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.fireflysoftware.domain.common.contracts.sdk.api.KitDocumentsApi;
 import io.fireflysoftware.domain.common.notifications.sdk.api.NotificationsApi;
 import io.fireflysoftware.domain.kyc.kyb.sdk.api.KybApi;
 import io.fireflysoftware.domain.kyc.kyb.sdk.model.RegisterUbosRequest;
@@ -70,6 +71,7 @@ class BusinessOnboardingWorkflowTest {
     @Mock private KybApi kybApi;
     @Mock private NotificationsApi notificationsApi;
     @Mock private io.fireflysoftware.domain.people.sdk.api.IndustryClassificationsApi industryClassificationsApi;
+    @Mock private KitDocumentsApi kitDocumentsApi;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
@@ -81,7 +83,8 @@ class BusinessOnboardingWorkflowTest {
     @BeforeEach
     void setUp() {
         workflow = new BusinessOnboardingWorkflow(
-                businessesApi, customersApi, kybApi, notificationsApi, objectMapper, validator, industryClassificationsApi);
+                businessesApi, customersApi, kybApi, notificationsApi, objectMapper, validator,
+                industryClassificationsApi, kitDocumentsApi);
     }
 
     @Test
@@ -292,5 +295,16 @@ class BusinessOnboardingWorkflowTest {
                 .registerCustomer(any(RegisterCustomerCommand.class), anyString());
         verify(kybApi, org.mockito.Mockito.never())
                 .registerUbos(any(UUID.class), any(RegisterUbosRequest.class), anyString());
+    }
+
+    @Test
+    void sendCompletionNotification_issuesWelcomeThroughTheDocumentDomainSdk() {
+        when(notificationsApi.sendNotification(any(), anyString())).thenReturn(Mono.empty());
+        when(kitDocumentsApi.issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString()))
+                .thenReturn(Mono.just(UUID.randomUUID()));
+
+        StepVerifier.create(workflow.sendCompletionNotification(PARTY_ID)).verifyComplete();
+
+        verify(kitDocumentsApi).issue(eq("welcome"), eq(PARTY_ID), eq(PARTY_ID), anyString());
     }
 }
