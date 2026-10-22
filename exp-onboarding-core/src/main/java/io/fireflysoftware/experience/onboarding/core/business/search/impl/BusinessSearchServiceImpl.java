@@ -19,42 +19,31 @@ package io.fireflysoftware.experience.onboarding.core.business.search.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.NullNode;
 import io.fireflysoftware.data.business.intelligence.sdk.api.BusinessIntelligenceApi;
 import io.fireflysoftware.data.business.intelligence.sdk.invoker.ApiClient;
 import io.fireflysoftware.data.business.intelligence.sdk.model.SelectCompanyRequest;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchRequest;
 import io.fireflysoftware.experience.onboarding.core.business.search.BusinessSearchService;
-import io.fireflysoftware.experience.onboarding.infra.BusinessIntelligenceClientFactory;
+import io.fireflysoftware.experience.onboarding.core.ports.CompanyEnrichmentPort;
 import io.fireflysoftware.experience.onboarding.infra.BusinessIntelligenceProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.fireflyframework.web.error.exceptions.BusinessException;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 @Slf4j
 @Service
 public class BusinessSearchServiceImpl implements BusinessSearchService {
 
-    private static final String ENRICHMENT_SMART_PATH = "/api/v1/enrichment/smart";
-
-    private final WebClient client;
+    private final CompanyEnrichmentPort enrichment;
     private final BusinessIntelligenceApi companies;
     private final BusinessIntelligenceProperties properties;
     private final ObjectMapper json = new ObjectMapper();
 
-    public BusinessSearchServiceImpl(
-            @Qualifier(BusinessIntelligenceClientFactory.BEAN_NAME) WebClient client,
-            BusinessIntelligenceProperties properties) {
-        this.client = client;
+    public BusinessSearchServiceImpl(CompanyEnrichmentPort enrichment, BusinessIntelligenceProperties properties) {
+        this.enrichment = enrichment;
         ApiClient apiClient = new ApiClient();
         String basePath = properties.getBasePath();
         if (basePath != null && !basePath.isBlank()) {
@@ -95,53 +84,8 @@ public class BusinessSearchServiceImpl implements BusinessSearchService {
             return Mono.error(new BusinessException(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED",
                     "bvdId is required"));
         }
-        if (properties.getOrbis() == null || properties.getOrbis().getTenantId() == null) {
-            return Mono.error(new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "CONFIG_MISSING",
-                    "orbis enricher tenantId is not configured"));
-        }
         log.debug("Fetching company data bvdId={}", bvdId);
-
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("bvdId", bvdId);
-        if (properties.getOrbis().getDomain() != null && !properties.getOrbis().getDomain().isBlank()) {
-            // Forwarded as the upstream Orbis "Domain" HTTP header (required by the provider).
-            params.put("domain", properties.getOrbis().getDomain());
-        }
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("type", properties.getOrbis().getEnrichmentType());
-        body.put("tenantId", properties.getOrbis().getTenantId().toString());
-        body.put("strategy", "RAW");
-        body.put("params", params);
-
-        return client.post()
-                .uri(ENRICHMENT_SMART_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .flatMap(this::extractCompanyData)
-                .onErrorMap(WebClientResponseException.class, this::mapUpstreamError);
-    }
-
-    private Mono<JsonNode> extractCompanyData(JsonNode envelope) {
-        // EnrichmentApiResponse → { success, enrichedData: OrbisCompositeResponse, ... }
-        // With strategy=RAW, enrichedData carries the unmapped provider response.
-        if (envelope == null || envelope.isNull() || envelope instanceof NullNode) {
-            return Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY, "UPSTREAM_PROTOCOL_ERROR",
-                    "enrichment response was empty"));
-        }
-        boolean success = envelope.path("success").asBoolean(false);
-        if (!success) {
-            String error = envelope.path("error").asText("upstream enrichment failed");
-            return Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY, "UPSTREAM_ENRICHMENT_FAILED", error));
-        }
-        JsonNode companyData = envelope.path("enrichedData").path("companyData");
-        if (companyData.isMissingNode() || companyData.isNull()) {
-            return Mono.error(new BusinessException(HttpStatus.BAD_GATEWAY, "UPSTREAM_PROTOCOL_ERROR",
-                    "enrichment response did not include companyData"));
-        }
-        return Mono.just(companyData);
+        return enrichment.companyData(bvdId);
     }
 
     private BusinessException mapUpstreamError(WebClientResponseException ex) {

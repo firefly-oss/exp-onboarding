@@ -35,6 +35,6 @@ public interface BusinessSearchService {
     /** Returns the raw provider match list (array of provider-shaped JSON objects). */
     Mono<JsonNode> searchMatches(BusinessSearchRequest request);
 
-    /** Returns only the {@code companyData} subtree of the enrichment response. */
+    /** Returns the company profile, or completes empty when the provider has no profile. */
     Mono<JsonNode> getCompanyData(String bvdId);
 }
